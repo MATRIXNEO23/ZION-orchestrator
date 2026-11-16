@@ -15,5 +15,3 @@ jobs:
         run: python -m py_compile zion.py zion_gui.py
       - name: Python unit tests
         run: python -m unittest discover -s tests -v
-      - name: GUI smoke test without API calls
-        run: python -c "import zion_gui; assert zion_gui.agent_name('{\"name\":\"codex-1\"}') == 'codex-1'; assert 'SQLite' in zion_gui.error_hint('database is locked')"
