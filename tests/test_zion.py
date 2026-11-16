@@ -56,6 +56,53 @@ class ZionTests(unittest.TestCase):
         self.assertIn("non fare commit", review.lower())
         self.assertIn('"run_id":"abc"', dev)
 
+    def test_unicode_telemetry_safe_on_windows_cp1252_pipe(self):
+        """Regression: a prompt containing '→' must not crash a cp1252 pipe."""
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                project=tmp, claude="claude", codex="codex",
+                allow_dirty=False, dry_run=False,
+                task="Verifica Claude → ZION → Codex; una prova breve",
+                max_rounds=3, timeout=10, poll=0.01
+            )
+            calls = []
+            def fake_wait(path, run_id, round_no, timeout, poll):
+                if path.name.startswith("claude"):
+                    return {"run_id": run_id, "round": round_no,
+                            "status": "ready", "summary": "Letto → verificato",
+                            "files_changed": []}
+                return {"run_id": run_id, "round": round_no,
+                        "status": "pass", "summary": "Revisione → OK",
+                        "issues": []}
+
+            buffer = io.BytesIO()
+            output = io.TextIOWrapper(buffer, encoding="cp1252",
+                                      errors="strict", write_through=True)
+            try:
+                with patch("zion.git_preflight"), patch("zion.hcom_preflight"):
+                    with patch("zion.sys.stdout", output):
+                        result = workflow(
+                            args, send=lambda name, msg: calls.append(msg),
+                            wait=fake_wait)
+                output.flush()
+                raw = buffer.getvalue().decode("cp1252")
+            finally:
+                output.detach()
+            self.assertEqual(result, 0)
+            self.assertEqual(len(calls), 2)
+            self.assertIn("→", calls[0])
+            events = [
+                json.loads(line[len("ZION_UI_EVENT "):])
+                for line in raw.splitlines()
+                if line.startswith("ZION_UI_EVENT ")
+            ]
+            self.assertEqual(len(events), 4)
+            self.assertIn("→", events[0]["prompt"])
+            self.assertEqual(events[1]["summary"], "Letto → verificato")
+            self.assertEqual(events[3]["summary"], "Revisione → OK")
+            self.assertIn(r"\\u2192", raw)
+
     def test_max_three_rounds_and_stop(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
