@@ -291,7 +291,8 @@ class ZionApp(tk.Tk):
         try:
             proc = subprocess.run(argv, env=env, cwd=cwd, text=True,
                                   encoding="utf-8", errors="replace",
-                                  capture_output=True, timeout=timeout)
+                                  capture_output=True, timeout=timeout,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"Timeout {timeout}s: {argv[0]} {argv[1]}") from exc
         if proc.returncode:
@@ -335,13 +336,21 @@ class ZionApp(tk.Tk):
                 return
             self.post("status", "Coordinamento in corso")
             self.listen_events(env, folder)
-            args = [sys.executable, str(BASE / "zion.py"), "run", task,
+            # Se la GUI usa pythonw.exe, lanciare il motore con python.exe:
+            # pythonw non garantisce stdout/stderr leggibili dal coordinatore.
+            engine = sys.executable
+            if Path(engine).name.lower() in ("pythonw.exe", "pyw.exe"):
+                candidate = str(Path(engine).with_name("python.exe"))
+                engine = candidate if Path(candidate).is_file() else (
+                    shutil.which("python", path=env["PATH"]) or engine)
+            args = [engine, str(BASE / "zion.py"), "run", task,
                     "--project", str(folder), "--codex", self.agents["codex"],
                     "--claude", self.agents["claude"]]
             self.child = subprocess.Popen(
                 args, cwd=BASE, env=env, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True,
-                encoding="utf-8", errors="replace", bufsize=1)
+                encoding="utf-8", errors="replace", bufsize=1,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             for raw in self.child.stdout:
                 line = raw.strip()
                 if not line:
@@ -378,7 +387,8 @@ class ZionApp(tk.Tk):
                 self.events_child = subprocess.Popen(
                     ["hcom", "events", "--follow"], cwd=folder, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    text=True, encoding="utf-8", errors="replace")
+                    text=True, encoding="utf-8", errors="replace",
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 for raw in self.events_child.stdout:
                     if self.cancel.is_set():
                         break
