@@ -109,8 +109,11 @@ def hcom_preflight(names: list[str]) -> None:
         result = subprocess.run(
             [binary("hcom"), "list", name, "status"], capture_output=True, text=True, timeout=20
         )
-        if result.returncode != 0 or result.stdout.strip().lower() in {"gone", "inactive"}:
-            raise ZionError(f"Agente hcom non attivo: {name}. Verifica con: hcom list")
+        status = result.stdout.strip().lower()
+        if result.returncode != 0 or status in {"gone", "inactive", "blocked"} or status.startswith("blocked:"):
+            raise ZionError(
+                f"Agente hcom non disponibile: {name} (status={status or 'errore'}). "
+                "Controlla hcom list -v e la modalita di comunicazione con l'agente.")
 
 
 def send_hcom(agent: str, message: str) -> None:
