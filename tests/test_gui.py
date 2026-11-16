@@ -69,8 +69,10 @@ class GuiUnitTests(unittest.TestCase):
         class Process:
             def __init__(self):
                 self.stdin = io.StringIO()
-                self.stdout = io.StringIO(
-                    '{"id":1,"result":{}}\\n{"id":2,"result":{"hooks":[]}}\\n')
+                self.stdout = io.StringIO(chr(10).join([
+                    '{"id":1,"result":{}}',
+                    '{"id":2,"result":{"hooks":[]}}'
+                ]) + chr(10))
                 self.stderr = io.StringIO()
                 self.pid = 123
             def wait(self, timeout=None):
@@ -85,7 +87,6 @@ class GuiUnitTests(unittest.TestCase):
         self.assertGreaterEqual(first, 0)
         self.assertGreaterEqual(second, 0)
         self.assertTrue(process.stdin.closed)
-        sent = process.stdin.getvalue() if not process.stdin.closed else ""
         self.assertTrue(popen.called)
 
     def test_codex_warmup_missing_reply_is_error(self):
