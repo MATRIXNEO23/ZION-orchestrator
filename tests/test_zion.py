@@ -1,4 +1,5 @@
 import argparse
+import os
 import json
 import tempfile
 import unittest
@@ -25,6 +26,80 @@ class ZionTests(unittest.TestCase):
             with patch("zion.subprocess.run", return_value=result):
                 with self.assertRaisesRegex(ZionError, "non disponibile"):
                     hcom_preflight(["rovo"])
+
+    def test_claude_direct_cli_reads_structured_output_and_limits_model_cost(self):
+        import subprocess
+        from zion import call_claude_direct
+        output = json.dumps({
+            "type": "result", "subtype": "success", "is_error": False,
+            "structured_output": {
+                "status": "ready", "summary": "ZION, 3 revisioni",
+                "files_changed": [], "tests": "Sola lettura"
+            },
+            "total_cost_usd": 0.011,
+            "result": ""
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            def fake_run(cmd, **kwargs):
+                self.assertEqual(kwargs["cwd"], Path(tmp))
+                self.assertIn("--json-schema", cmd)
+                self.assertEqual(cmd[cmd.index("--model") + 1], "haiku")
+                self.assertEqual(cmd[cmd.index("--max-budget-usd") + 1], "0.75")
+                self.assertIn("COMPITO", kwargs["input"])
+                self.assertEqual(kwargs["encoding"], "utf-8")
+                return subprocess.CompletedProcess(cmd, 0, output, "")
+            with patch.dict("os.environ", {"ZION_CLAUDE_BINARY": "claude.cmd"}):
+                with patch("zion.subprocess.run", side_effect=fake_run):
+                    data, cost = call_claude_direct(
+                        Path(tmp), "Leggi README.md", None, 30, "haiku")
+        self.assertEqual(cost, 0.011)
+        self.assertEqual(data["summary"], "ZION, 3 revisioni")
+
+    def test_claude_direct_rejects_errors_and_invalid_json(self):
+        from zion import parse_claude_direct_result
+        with self.assertRaisesRegex(ZionError, "non ha completato"):
+            parse_claude_direct_result(json.dumps({
+                "subtype": "error_during_execution", "is_error": True,
+                "result": "Permission denied"}))
+        with self.assertRaisesRegex(ZionError, "non valida"):
+            parse_claude_direct_result("invalid output")
+        with self.assertRaisesRegex(ZionError, "status report"):
+            parse_claude_direct_result(json.dumps({
+                "subtype": "success", "is_error": False,
+                "structured_output": {
+                    "status": "pass", "summary": "OK",
+                    "files_changed": [], "tests": ""
+                }}))
+
+    def test_workflow_direct_uses_hcom_only_for_codex(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                project=tmp, claude="claude-cli", codex="reviewer",
+                claude_mode="direct", claude_model="haiku",
+                allow_dirty=False, dry_run=False,
+                task="Leggi README.md", max_rounds=1, timeout=20, poll=0.01)
+            calls = []
+            def fake_wait(path, run_id, round_no, timeout, poll):
+                self.assertTrue(path.name.startswith("codex-"))
+                return {"run_id": run_id, "round": round_no,
+                        "status": "pass", "summary": "Confermato", "issues": []}
+            with patch("zion.git_preflight"):
+                with patch("zion.hcom_preflight") as preflight:
+                    with patch("zion.call_claude_direct", return_value=(
+                            {"status": "ready", "summary": "ZION 3 revisioni",
+                             "files_changed": [], "tests": "OK"},
+                            0.025)) as direct:
+                        result = workflow(
+                            args, send=lambda agent, text: calls.append(agent),
+                            wait=fake_wait)
+            self.assertEqual(result, 0)
+            preflight.assert_called_once_with(["reviewer"])
+            direct.assert_called_once()
+            self.assertEqual(calls, ["reviewer"])
+            reports = list((Path(tmp) / ".zion" / "runs").glob("*/claude-1.json"))
+            self.assertEqual(len(reports), 1)
+            self.assertEqual(
+                json.loads(reports[0].read_text(encoding="utf-8"))["status"], "ready")
 
     def test_compact_issues_caps_size(self):
         issues = [{"file": "a.py", "line": 12, "severity": "high",
