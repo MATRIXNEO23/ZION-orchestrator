@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
+from zion_diagnostics import collect_diagnostics, save_report
 
 BASE = Path(__file__).resolve().parent
 LOG_DIR = BASE / "logs"
@@ -95,6 +96,8 @@ class ZionApp(tk.Tk):
         self.messages = queue.Queue()
         self.cancel = threading.Event()
         self.running = False
+        self.diagnostic_running = False
+        self.latest_diagnostic = None
         self.child = None
         self.events_child = None
         self.logfile = LOG_DIR / ("zion_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".log")
@@ -120,6 +123,10 @@ class ZionApp(tk.Tk):
         tk.Label(top, text="Repository Git", fg="#d8e7ef", bg="#101721").pack(side="left")
         ttk.Entry(top, textvariable=self.project).pack(side="left", fill="x", expand=True, padx=8)
         ttk.Button(top, text="Sfoglia", command=self.browse).pack(side="left")
+        self.test_button = ttk.Button(top, text="Fai test", command=self.start_diagnostics)
+        self.test_button.pack(side="left", padx=(3, 0))
+        self.copy_test_button = ttk.Button(top, text="Copia report", command=self.copy_diagnostic)
+        self.copy_test_button.pack(side="left", padx=(5, 0))
         ttk.Button(top, text="Errori e diagnostica", command=self.show_errors).pack(side="left", padx=7)
 
         body = tk.Frame(self, bg="#101721")
@@ -176,6 +183,46 @@ class ZionApp(tk.Tk):
             os.startfile(str(LOG_DIR))
         else:
             messagebox.showinfo("Cartella log", str(LOG_DIR))
+
+    def start_diagnostics(self):
+        """Avvia test locali in sola lettura; non avvia Claude, Codex o Zion."""
+        if self.diagnostic_running:
+            return
+        if self.running:
+            messagebox.showwarning("ZION", "Ferma il lavoro prima di avviare la diagnostica.")
+            return
+        self.diagnostic_running = True
+        self.test_button.configure(state="disabled")
+        self.current.set("Diagnostica in corso...")
+        project = self.project.get().strip().strip('"') or None
+        threading.Thread(target=self._diagnose, args=(project,), daemon=True).start()
+
+    def _diagnose(self, project):
+        try:
+            env = {**os.environ, "PATH": locate_path()}
+            records = collect_diagnostics(project=project, env=env)
+            report = save_report(records)
+            for status, label, detail in records:
+                self.post("log", "zion", f"TEST {status} | {label}: {detail}")
+            errors = sum(1 for status, _, _ in records if status == "ERRORE")
+            warnings = sum(1 for status, _, _ in records if status == "ATTENZIONE")
+            self.post("diagnostic_result", str(report), errors, warnings)
+        except Exception as exc:
+            self.post("diagnostic_result", "", -1, -1)
+            self.post("error", "Diagnostica fallita: " + str(exc))
+
+    def copy_diagnostic(self):
+        if self.latest_diagnostic is None or not self.latest_diagnostic.is_file():
+            messagebox.showinfo("ZION", "Prima premi Fai test per generare un report.")
+            return
+        try:
+            content = self.latest_diagnostic.read_text(encoding="utf-8")
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            self.update_idletasks()
+            messagebox.showinfo("ZION", "Report copiato. Puoi incollarlo in chat.")
+        except OSError as exc:
+            messagebox.showerror("ZION", f"Impossibile copiare il report: {exc}")
 
     def show_errors(self):
         if self.error_window and self.error_window.winfo_exists():
@@ -240,6 +287,18 @@ class ZionApp(tk.Tk):
                 self.current.set(data[0])
             elif event == "arrow":
                 self.motion[data[0]] = (time.monotonic(), data[1])
+            elif event == "diagnostic_result":
+                path, errors, warnings = data
+                self.diagnostic_running = False
+                self.test_button.configure(state="normal")
+                if path:
+                    self.latest_diagnostic = Path(path)
+                    self.current.set(
+                        f"Test completati: {errors} errori, {warnings} avvisi")
+                    self.log("zion", f"Report salvato: {Path(path).name}")
+                    self.show_errors()
+                else:
+                    self.current.set("Errore durante la diagnostica")
             elif event == "done":
                 self.running = False
                 self.go.configure(state="normal")
