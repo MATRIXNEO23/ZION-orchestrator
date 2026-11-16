@@ -498,17 +498,40 @@ class ZionApp(tk.Tk):
                 line = raw.strip()
                 if not line:
                     continue
+                if line.startswith("ZION_UI_EVENT "):
+                    try:
+                        event = json.loads(line[len("ZION_UI_EVENT "):])
+                    except ValueError:
+                        self.post("log", "zion", "Evento GUI malformato; consulta il log.")
+                        continue
+                    if not isinstance(event, dict) or event.get("agent") not in ("claude", "codex"):
+                        continue
+                    kind = event["agent"]
+                    if event.get("type") == "prompt":
+                        prompt = str(event.get("prompt", ""))[:5000]
+                        self.post("log", kind,
+                                  f"COMPITO INVIATO A {kind.upper()} (ciclo {event.get('round')}):\\n"
+                                  + prompt)
+                        self.post("log", kind,
+                                  "IN ATTESA DI RISCONTRO. L'invio non conferma "
+                                  "che l'agente stia eseguendo il compito.")
+                    elif event.get("type") == "report":
+                        status = str(event.get("status", "non specificato"))[:32]
+                        summary = str(event.get("summary", ""))[:500]
+                        self.post("log", kind,
+                                  f"RAPPORTO RICEVUTO: stato={status}; {summary}")
+                    continue
                 is_err = any(word in line.lower() for word in (
                     "errore", "error", "database is locked", "preflight failed", "timeout"))
                 self.post("log", "zion", line, is_err)
                 if "claude_incaricato" in line:
                     self.post("arrow", "claude", 1)
-                    self.post("log", "claude", "Incarico ricevuto")
+                    self.post("log", "claude", "Invio confermato da hcom, risposta non ancora ricevuta.")
                 elif "claude_rapporto_ricevuto" in line or "claude_bloccato" in line:
                     self.post("arrow", "claude", -1)
                 elif "codex_incaricato" in line:
                     self.post("arrow", "codex", -1)
-                    self.post("log", "codex", "Revisione richiesta")
+                    self.post("log", "codex", "Invio della revisione confermato da hcom.")
                 elif "codex_rapporto_ricevuto" in line or "revisione_superata" in line:
                     self.post("arrow", "codex", 1)
             code = self.child.wait()
