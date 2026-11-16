@@ -204,7 +204,9 @@ def workflow(args: argparse.Namespace, send=send_hcom, wait=read_report) -> int:
         """Structured GUI telemetry; ignored by older GUI clients."""
         payload = {"type": event_type, "agent": agent, "round": round_no}
         payload.update(details)
-        print("ZION_UI_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
+        # ASCII-safe JSON for Windows pipes using legacy cp1252 encodings.
+        # The GUI decodes escaped Unicode (e.g. \\u2192) back to the original text.
+        print("ZION_UI_EVENT " + json.dumps(payload, ensure_ascii=True), flush=True)
 
     issues = None
     previous_digest = None
