@@ -1,6 +1,6 @@
 # ZION-orchestrator
 
-**ZION 0.1.0 — prima versione da collaudare su Windows.**
+**ZION 0.2.0 — GUI Windows e diagnostica, versione di collaudo.**
 
 Orchestratore minimale per **Claude Code (sviluppo)** e **Codex CLI (revisione)**. Usa [hcom](https://github.com/aannoo/hcom) come motore esterno per messaggistica e cronologia SQLite: **non duplica né modifica il motore Rust di hcom**.
 
