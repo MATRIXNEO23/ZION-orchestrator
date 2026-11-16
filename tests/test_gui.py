@@ -128,6 +128,34 @@ class GuiUnitTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "initialize senza risposta"):
                 warm_codex_app_server("codex.cmd", ".", timeout=1)
 
+    def test_stop_kills_direct_claude_process_tree_on_windows(self):
+        import subprocess
+        import tkinter
+        from unittest.mock import Mock, patch
+        from zion_gui import ZionApp
+        try:
+            app = ZionApp()
+        except tkinter.TclError as exc:
+            self.skipTest("Desktop GUI unavailable: " + str(exc))
+        try:
+            app.withdraw()
+            process = Mock()
+            process.pid = 123456
+            process.poll.return_value = None
+            app.child = process
+            with patch("zion_gui.os.name", "nt"):
+                with patch("zion_gui.subprocess.run", return_value=(
+                        subprocess.CompletedProcess([], 0))) as run:
+                    app.request_stop()
+            cmd = run.call_args.args[0]
+            self.assertEqual(
+                cmd, ["taskkill", "/PID", "123456", "/T", "/F"])
+            self.assertTrue(app.cancel.is_set())
+            self.assertTrue(app.monitor_stop.is_set())
+        finally:
+            app.child = None
+            app.destroy()
+
     def test_window_close_kills_only_agents_owned_by_this_app(self):
         import os
         import subprocess
