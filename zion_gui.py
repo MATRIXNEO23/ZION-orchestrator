@@ -355,7 +355,9 @@ class ZionApp(tk.Tk):
                 line = raw.strip()
                 if not line:
                     continue
-                self.post("log", "zion", line)
+                is_err = any(word in line.lower() for word in (
+                    "errore", "error", "database is locked", "preflight failed", "timeout"))
+                self.post("log", "zion", line, is_err)
                 if "claude_incaricato" in line:
                     self.post("arrow", "claude", 1)
                     self.post("log", "claude", "Incarico ricevuto")
