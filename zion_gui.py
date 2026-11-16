@@ -379,6 +379,10 @@ class ZionApp(tk.Tk):
                 if self.agent_hcom_state.get(role) != health:
                     self.agent_hcom_state[role] = health
                     self.log(role, "Stato rilevato da hcom: " + health)
+            elif event == "agent_closed":
+                role = data[0]
+                self.agent_sent_at.pop(role, None)
+                self.agent_hcom_state[role] = "terminato da ZION"
             elif event == "done":
                 self.running = False
                 self.go.configure(state="normal")
@@ -439,6 +443,7 @@ class ZionApp(tk.Tk):
         """Stop only agents registered by this GUI, on success, stop, or close."""
         for role, name, success, detail in self.sessions.cleanup():
             if success:
+                self.post("agent_closed", role)
                 self.post("log", role, f"Sessione hcom {name} chiusa da ZION.")
             else:
                 self.post("error",
