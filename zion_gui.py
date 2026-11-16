@@ -603,8 +603,11 @@ class ZionApp(tk.Tk):
             args = [engine, str(BASE / "zion.py"), "run", task,
                     "--project", str(folder), "--codex", self.agents["codex"],
                     "--claude", self.agents["claude"]]
+            # The child is a Python process with stdout piped to the GUI.
+            # Force UTF-8 even if Windows uses a legacy ANSI code page.
+            engine_env = {**env, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
             self.child = subprocess.Popen(
-                args, cwd=BASE, env=env, stdout=subprocess.PIPE,
+                args, cwd=BASE, env=engine_env, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True,
                 encoding="utf-8", errors="replace", bufsize=1,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
