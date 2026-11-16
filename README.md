@@ -1,6 +1,6 @@
 # ZION-orchestrator
 
-**ZION 0.2.0 — GUI Windows e diagnostica, versione di collaudo.**
+**ZION 0.2.1 test — GUI Windows, diagnostica con pulsante Fai test (ramo di collaudo).**
 
 Orchestratore minimale per **Claude Code (sviluppo)** e **Codex CLI (revisione)**. Usa [hcom](https://github.com/aannoo/hcom) come motore esterno per messaggistica e cronologia SQLite: **non duplica né modifica il motore Rust di hcom**.
 
@@ -47,6 +47,17 @@ Esegui **AVVIA_ZION.bat** per aprire la finestra grafica, senza usare i comandi 
 - **AVVIA_ZION_CMD.bat** conserva il vecchio avvio guidato con CMD per eventuale regressione.
 
 **Stato:** interfaccia verificabile tramite test automatici Windows, ma il funzionamento reale dell'integrazione hcom con Claude/Codex su ogni PC non è garantito. Se Codex segnala \`database is locked\` o un errore App Server, la finestra Errori mostrerà i dettagli e ZION si fermerà; non tenterà di eliminare o riparare automaticamente il database.
+
+## Diagnostica con un clic (nuova nel ramo di test)
+
+- Apri **AVVIA_ZION.bat** e premi **Fai test**, senza compilare il campo Compito. La cartella Git del progetto e facoltativa per la diagnostica.
+- Il pulsante verifica automaticamente la disponibilita e le versioni dei comandi Git, hcom, Claude Code e Codex, lo stato degli hook hcom e la lista degli agenti, la disponibilita di Codex App Server, i login CLI locali (quando riconoscibili) e, se indicato, lo stato della repository Git.
+- **Fai test non installa nulla, non lancia le IA, non avvia l'orchestrazione e non consuma token dei modelli.** Non modifica i login o le credenziali. Un login locale rilevato non prova la connettivita hcom con l'agente.
+- Il report e salvato automaticamente come `logs/diagnostica_DATA_ORA.log`. Premi **Copia report** per incollarne il contenuto in chat, oppure **Cartella log** per trovare il file.
+- La diagnostica non puo provare uno scambio autentico Claude–Codex senza sessioni reali. Per questo lo indica espressamente nel report.
+- In presenza di un messaggio inatteso della CLI, la diagnostica segnala *non confermato*, invece di inventare un login riuscito. Gli output grezzi dei comandi di autenticazione non vengono inclusi nel report.
+
+**Questa e una versione di prova:** il runner GitHub verifica automaticamente il programma su Windows, ma non ha le sessioni autentiche degli account personali.
 
 ## Avvio su Windows (PowerShell) — alternativa manuale
 
