@@ -199,6 +199,7 @@ def workflow(args: argparse.Namespace, send=send_hcom, wait=read_report) -> int:
             note("claude_incaricato", round_no)
             send(args.claude, developer_prompt(args.task, issues, dev_path, run_id, round_no))
             dev = wait(dev_path, run_id, round_no, args.timeout, args.poll)
+            note("claude_rapporto_ricevuto", round_no)
             if dev.get("status") != "ready":
                 state["status"] = "blocked"
                 note("claude_bloccato", round_no)
@@ -208,6 +209,7 @@ def workflow(args: argparse.Namespace, send=send_hcom, wait=read_report) -> int:
             note("codex_incaricato", round_no)
             send(args.codex, reviewer_prompt(args.task, dev, review_path, run_id, round_no))
             review = wait(review_path, run_id, round_no, args.timeout, args.poll)
+            note("codex_rapporto_ricevuto", round_no)
             status = review.get("status")
             if status == "pass":
                 state["status"] = "passed"
