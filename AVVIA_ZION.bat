@@ -2,16 +2,27 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 if not exist "logs" mkdir "logs"
-if not exist "scripts\avvia_windows.ps1" (
-  echo [ZION] ERRORE: manca scripts\avvia_windows.ps1.
-  echo Scarica ed estrai lo ZIP completo della repository.
+if not exist "zion_gui.py" (
+  echo [ZION] ERRORE: zion_gui.py non trovato.
+  echo Scarica lo ZIP completo ed estrailo prima di avviare.
   pause
   exit /b 2
 )
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\avvia_windows.ps1"
-set "RESULT=%ERRORLEVEL%"
-echo.
-if not "%RESULT%"=="0" echo [ZION] Avvio terminato con errore %RESULT%. Controlla la cartella logs.
-echo Premi un tasto per chiudere.
-pause >nul
-exit /b %RESULT%
+where pyw >nul 2>&1
+if %ERRORLEVEL%==0 (
+  start "" /D "%~dp0" pyw -3 "%~dp0zion_gui.py"
+  exit /b 0
+)
+where pythonw >nul 2>&1
+if %ERRORLEVEL%==0 (
+  start "" /D "%~dp0" pythonw "%~dp0zion_gui.py"
+  exit /b 0
+)
+where py >nul 2>&1
+if %ERRORLEVEL%==0 (
+  py -3 "%~dp0zion_gui.py"
+  exit /b %ERRORLEVEL%
+)
+echo [ZION] Python non trovato. Esegui INSTALLA_ZION.bat.
+pause
+exit /b 1
