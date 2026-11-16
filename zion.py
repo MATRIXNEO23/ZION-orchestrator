@@ -197,25 +197,44 @@ def workflow(args: argparse.Namespace, send=send_hcom, wait=read_report) -> int:
         atomic_json(folder / "state.json", state)
         print(f"[ZION] {event} (ciclo {round_no})", flush=True)
 
+    def ui_event(event_type: str, agent: str, round_no: int, **details) -> None:
+        """Structured GUI telemetry; ignored by older GUI clients."""
+        payload = {"type": event_type, "agent": agent, "round": round_no}
+        payload.update(details)
+        print("ZION_UI_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
+
     issues = None
     previous_digest = None
     try:
         for round_no in range(1, args.max_rounds + 1):
             dev_path = folder / f"claude-{round_no}.json"
-            note("claude_incaricato", round_no)
-            send(args.claude, developer_prompt(args.task, issues, dev_path, run_id, round_no))
+            dev_prompt = developer_prompt(args.task, issues, dev_path, run_id, round_no)
+            ui_event("prompt", "claude", round_no, prompt=dev_prompt)
+            send(args.claude, dev_prompt)
+            note("claude_incaricato", round_no)  # hcom send returned successfully; no delivery ack
             dev = wait(dev_path, run_id, round_no, args.timeout, args.poll)
             note("claude_rapporto_ricevuto", round_no)
+            ui_event("report", "claude", round_no,
+                     status=str(dev.get("status", ""))[:32],
+                     summary=str(dev.get("summary", ""))[:500],
+                     tests=str(dev.get("tests", ""))[:300])
             if dev.get("status") != "ready":
                 state["status"] = "blocked"
                 note("claude_bloccato", round_no)
                 break
 
             review_path = folder / f"codex-{round_no}.json"
-            note("codex_incaricato", round_no)
-            send(args.codex, reviewer_prompt(args.task, dev, review_path, run_id, round_no))
+            review_prompt = reviewer_prompt(args.task, dev, review_path, run_id, round_no)
+            ui_event("prompt", "codex", round_no, prompt=review_prompt)
+            send(args.codex, review_prompt)
+            note("codex_incaricato", round_no)  # hcom send returned successfully; no delivery ack
             review = wait(review_path, run_id, round_no, args.timeout, args.poll)
             note("codex_rapporto_ricevuto", round_no)
+            ui_event("report", "codex", round_no,
+                     status=str(review.get("status", ""))[:32],
+                     summary=str(review.get("summary", ""))[:400],
+                     issues=len(review.get("issues", []))
+                     if isinstance(review.get("issues", []), list) else 0)
             status = review.get("status")
             if status == "pass":
                 state["status"] = "passed"
