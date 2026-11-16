@@ -38,15 +38,17 @@ L'installer e pensato **solo per Windows** e va ancora verificato sul tuo PC rea
 
 Esegui **AVVIA_ZION.bat** per aprire la finestra grafica, senza usare i comandi nel CMD.
 
-- Tre pannelli: **Codex a sinistra, ZION al centro, Claude a destra**. Vengono mostrati gli eventi hcom e il coordinamento effettivo. Non viene inventato output di agenti; i transcript completi non sono ancora visualizzati.
+- Tre pannelli: **Codex a sinistra, ZION al centro, Claude a destra**. Sono mostrati il **prompt realmente preparato per ogni agente**, la conferma di invio a hcom, i **rapporti ricevuti** e lo stato osservato tramite `hcom list --json`. Una riga «inviato» non significa «agente al lavoro»; i transcript completi non sono ancora visualizzati.
+- Ogni pannello agente mostra il tempo trascorso dall'invio e la condizione rilevata da hcom (per esempio listening, active, blocked). Se Claude segnala «mod never connected», ZION interrompe l'attesa e termina i suoi agenti; non interrompe automaticamente i blocchi di autorizzazione potenzialmente risolvibili.
 - Le frecce tra i pannelli si animano quando viene inviato un incarico o ricevuto un rapporto.
 - Scegli la cartella Git del progetto, inserisci il compito e premi **Avvia lavoro**. Le richieste partono **solo dopo conferma** e possono consumare quota dei modelli.
 - Il pulsante **Errori e diagnostica** apre in qualunque momento una finestra dedicata, aggiornata automaticamente; in caso di errore si apre da sola. Il file completo è salvato nella cartella **logs** e resta disponibile anche dopo l'uscita.
-- **Ferma ZION** interrompe il processo coordinatore, ma non forza la chiusura delle sessioni Claude/Codex eventualmente già avviate. Non vengono cancellati database, file del progetto o cronologie.
+- **Ferma ZION**, il pulsante **X** e il completamento del compito fermano il coordinatore e chiudono con `hcom kill NOME` **solo le sessioni lanciate da questa finestra ZION**. Le sessioni precedenti o create esternamente non vengono toccate. Se la chiusura non riesce, l'app lo segnala e permette di riprovare. Non usa `kill all`, né cancella database, file del progetto o cronologie.
+- Durante la chiusura la finestra aspetta che eventuali avvii in corso si concludano, per evitare di lasciare agenti orfani. La chiusura forzata dal Task Manager o un arresto del PC non sono recuperabili in modo garantito.
 - Il collegamento hcom viene avviato sequenzialmente in modalità headless: è consigliato avere hcom **0.7.31 o successivo** per gli eventi live e l'output JSON. L'app non installa automaticamente aggiornamenti o modifica le credenziali.
 - **AVVIA_ZION_CMD.bat** conserva il vecchio avvio guidato con CMD per eventuale regressione.
 
-**Stato:** interfaccia verificabile tramite test automatici Windows, ma il funzionamento reale dell'integrazione hcom con Claude/Codex su ogni PC non è garantito. Se Codex segnala \`database is locked\` o un errore App Server, la finestra Errori mostrerà i dettagli e ZION si fermerà; non tenterà di eliminare o riparare automaticamente il database.
+**Stato:** avvio reale di Claude e Codex via hcom osservato su PC Windows, ma la ricezione dei rapporti e il ciclo Claude-Codex completo devono ancora essere verificati. I test automatici coprono la logica GUI, la pulizia degli agenti e gli stati, non simulano due account autenticati. Se Codex segnala \`database is locked\` o un errore App Server, la finestra Errori mostrerà i dettagli e ZION si fermerà; non tenterà di eliminare o riparare automaticamente il database.
 
 ## Avvio su Windows (PowerShell) — alternativa manuale
 
@@ -92,9 +94,10 @@ py -3 zion.py status --project C:\percorso\LUMI
 - Usare preferibilmente un **worktree o branch Git pulito**. ZION rifiuta modifiche preesistenti, a meno che non si specifichi consapevolmente --allow-dirty.
 - Non esegue direttamente commit, push, deploy o cancellazioni; ordina alle IA di non farlo. **Le autorizzazioni reali dipendono dalle impostazioni delle due CLI.** Verificarle prima di usare il programma su progetti importanti.
 - Salva rapporti e stato nella cartella del progetto **.zion/runs/**. È consigliato aggiungere .zion/ al gitignore del progetto e non pubblicare report contenenti informazioni riservate.
-- hcom può rilevare quando un agente diventa inattivo, ma ciò non prova che abbia completato il compito: ZION aspetta un **rapporto JSON verificabile**. In sua assenza si ferma al timeout.
+- hcom può rilevare lo stato di un agente, ma `active` o `listening` non provano che stia eseguendo il compito: ZION aspetta un **rapporto JSON verificabile**. Se il processo segnala un blocco conosciuto dell'integrazione Claude, interrompe in anticipo; in altri casi resta il timeout.
+- Se hcom segnala «Claude mod never connected» con la modalità nativa, è disponibile la modalità `inject` tramite `hcom config claude_delivery inject`; richiede di rilanciare la sessione Claude. Non è richiesto reinstallare Codex.
 - Non esegue retry illimitati e non finge che un test sia riuscito.
-- **Non ancora collaudato con due account autenticati su un PC Windows reale.** I test automatici verificano la logica Python, non le integrazioni live o le quote.
+- **Il ciclo completo con due account autenticati è ancora da collaudare.** I test automatici verificano la logica Python e la gestione delle sessioni, non le quote o la conferma del completamento reale.
 
 ## Test
 
