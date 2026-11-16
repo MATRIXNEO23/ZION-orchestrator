@@ -21,9 +21,22 @@ Nessuna terza IA: ZION usa soltanto Python standard library. hcom gestisce messa
 - hcom installato seguendo le [istruzioni ufficiali](https://github.com/aannoo/hcom#install); un metodo è tramite uv: uv tool install hcom.
 - Internet per le IA. ZION non chiede credenziali o chiavi API.
 
-## Avvio su Windows (PowerShell)
+## Installazione e diagnosi automatica su Windows (consigliata)
 
-Scaricare ZION e verificare i requisiti:
+Scarica il repository come ZIP da GitHub, estrailo in una cartella e fai doppio clic su **`INSTALLA_ZION.bat`**.
+
+- Controlla **Git, Python 3.10+, hcom, Claude Code CLI e Codex CLI**; se mancano, prova a installarli attraverso WinGet, uv o npm dai canali di distribuzione ufficiali. Se gia presenti e funzionanti, li lascia invariati.
+- Scrive i risultati e gli errori in **`logs/setup_DATA_ORA.log`**, senza avviare le due IA o consumare quota di modelli.
+- Se un'installazione non riesce (per esempio WinGet non disponibile, privilegi insufficienti o incompatibilita), segnala l'errore e non avvia automaticamente il lavoro tra agenti.
+- L'accesso agli account Claude e Codex deve essere completato **manualmente**: ZION non raccoglie credenziali e non garantisce l'accesso ai servizi.
+
+Per una **sola diagnostica senza installazioni**, fai partire `INSTALLA_ZION.bat /check` dal Prompt dei comandi. Sul PC possono apparire richieste di conferma di Windows durante le installazioni.
+
+L'installer e pensato **solo per Windows** e va ancora verificato sul tuo PC reale; non assicura che ogni combinazione di hardware, policy aziendali o account sia compatibile.
+
+## Avvio su Windows (PowerShell) — alternativa manuale
+
+Se preferisci i passaggi manuali, scarica ZION e verifica i requisiti:
 
 ~~~powershell
 git clone https://github.com/MATRIXNEO23/ZION-orchestrator.git
