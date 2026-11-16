@@ -100,3 +100,28 @@ jobs:
               process.wait(timeout=5)
           '@ | Set-Content -Path "$env:RUNNER_TEMP\codex_hooks_probe.py" -Encoding utf8
           python "$env:RUNNER_TEMP\codex_hooks_probe.py"
+      - name: Reproduce hcom per-run Codex startup on clean Windows (no authenticated agent)
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check uv
+          uv tool install hcom
+          $bin = (& uv tool dir --bin).Trim()
+          $hcom = Join-Path $bin "hcom.exe"
+          & $hcom --version
+          @'
+          import subprocess, sys
+          hcom, project = sys.argv[1:3]
+          try:
+              p = subprocess.run([hcom, "codex", "--headless", "--json", "--dir", project],
+                                 capture_output=True, text=True, timeout=40,
+                                 encoding="utf-8", errors="replace")
+              report = p.stdout[-3000:] + "\n" + p.stderr[-3000:]
+              print("hcom launch returncode:", p.returncode)
+              print("hcom launch output (redacted/no credentials present):", report)
+              if "Failed to prepare hcom" in report or "hooks/list preflight failed" in report:
+                  sys.exit("FAIL: reproduced the same per-run setup failure")
+              print("No hcom hooks/list preflight error on this runner")
+          except subprocess.TimeoutExpired as e:
+              print("hcom launch timeout after 40s; authentication may be unavailable on runner")
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\hcom_launch_probe.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\hcom_launch_probe.py" "$hcom" "$env:GITHUB_WORKSPACE"
