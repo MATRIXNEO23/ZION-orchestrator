@@ -16,10 +16,10 @@ Nessuna terza IA: ZION usa soltanto Python standard library. hcom gestisce messa
 
 ## Requisiti
 
-- Windows 10/11; Python 3.10 o successivo; Git.
-- Claude Code CLI e Codex CLI già installati e autenticati: verificare separatamente abbonamenti e fatturazione.
-- hcom installato seguendo le [istruzioni ufficiali](https://github.com/aannoo/hcom#install); un metodo è tramite uv: uv tool install hcom.
-- Internet per le IA. ZION non chiede credenziali o chiavi API.
+- Windows 10/11, connessione Internet per installazioni e IA. Su Windows e necessario **WinGet / App Installer** per l'installazione automatica dei prerequisiti mancanti.
+- Python 3.10+, Git, Claude Code CLI, Codex CLI e hcom sono necessari per il funzionamento. **`INSTALLA_ZION.bat` prova a installare soltanto quelli assenti**.
+- Claude e Codex richiedono autenticazione personale e un accesso valido ai rispettivi servizi; verificare separatamente abbonamenti e fatturazione.
+- ZION non chiede credenziali o chiavi API e non installa nuovi componenti in modalita `/check`.
 
 ## Installazione e diagnosi automatica su Windows (consigliata)
 
@@ -59,7 +59,7 @@ In un terzo terminale eseguire **hcom list** per leggere i nomi effettivi dei du
 py -3 C:\percorso\ZION-orchestrator\zion.py run "Correggi il problema richiesto" --project C:\percorso\LUMI --claude NOME_CLAUDE --codex NOME_CODEX
 ~~~
 
-Se i nomi corrispondono a claude e codex, le due opzioni per i nomi sono facoltative. I terminali degli agenti devono essere già avviati **nella stessa cartella di progetto**. ZION non installa, autentica o avvia automaticamente le due IA.
+Se i nomi corrispondono a claude e codex, le due opzioni per i nomi sono facoltative. I terminali degli agenti devono essere già avviati **nella stessa cartella di progetto**. `zion.py` non autentica o avvia automaticamente le due IA. L'installazione iniziale dei programmi mancanti e gestita separatamente da `INSTALLA_ZION.bat`.
 
 Prova senza inviare messaggi:
 
