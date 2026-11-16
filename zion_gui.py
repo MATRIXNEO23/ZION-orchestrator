@@ -21,7 +21,9 @@ def locate_path():
     parts = [os.environ.get("PATH", ""), os.environ.get("APPDATA", "") + r"\npm",
              str(Path.home() / ".local" / "bin"), os.environ.get("UV_TOOL_BIN_DIR", ""),
              os.path.join(os.environ.get("ProgramFiles", ""), "Git", "cmd"),
-             os.path.join(os.environ.get("ProgramFiles", ""), "nodejs")]
+             os.path.join(os.environ.get("ProgramFiles", ""), "nodejs"),
+             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links"),
+             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Git", "cmd")]
     if os.name == "nt":
         for scope in ("Machine", "User"):
             try:
@@ -75,6 +77,9 @@ def error_hint(message):
     if "app server closed" in low or "codex integration" in low:
         return ("L'integrazione Codex App Server si interrompe. L'avvio di 'codex' "
                 "da solo non prova che la comunicazione hcom funzioni.")
+    if "winerror 2" in low or "file not found" in low or "no such file" in low:
+        return ("Windows non riesce ad avviare un eseguibile. Il comando e il percorso "
+                "sono riportati nella diagnostica; non reinstallare Codex alla cieca.")
     if "non trovato" in low or "not found" in low:
         return "Componente non trovato. Controlla INSTALLA_ZION.bat e il PATH."
     return "Controlla le righe precedenti e il log completo nella cartella logs."
@@ -206,14 +211,14 @@ class ZionApp(tk.Tk):
             view.delete("1.0", "50.0")
         view.see("end")
         view.configure(state="disabled")
-        if is_error:
-            self.errors.append(entry)
-            self.errors = self.errors[-1600:]
-            if self.error_window and self.error_window.winfo_exists():
-                self.error_view.configure(state="normal")
-                self.error_view.insert("end", entry + "\n")
-                self.error_view.see("end")
-                self.error_view.configure(state="disabled")
+        # Mostra anche i comandi precedenti, non soltanto la riga di errore.
+        self.errors.append(entry)
+        self.errors = self.errors[-1600:]
+        if self.error_window and self.error_window.winfo_exists():
+            self.error_view.configure(state="normal")
+            self.error_view.insert("end", entry + "\n")
+            self.error_view.see("end")
+            self.error_view.configure(state="disabled")
 
     def post(self, event, *values):
         self.messages.put((event, values))
@@ -288,14 +293,17 @@ class ZionApp(tk.Tk):
                          daemon=True).start()
 
     def command(self, argv, env, cwd, timeout=90):
-        self.post("log", "zion", "Comando: " + " ".join(argv[:3]))
+        display = subprocess.list2cmdline([str(arg) for arg in argv])
+        self.post("log", "zion", "Comando: " + display[:900])
         try:
             proc = subprocess.run(argv, env=env, cwd=cwd, text=True,
                                   encoding="utf-8", errors="replace",
                                   capture_output=True, timeout=timeout,
                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"Timeout {timeout}s: {argv[0]} {argv[1]}") from exc
+            raise RuntimeError(f"Timeout {timeout}s: {display[:900]}") from exc
+        except OSError as exc:
+            raise RuntimeError(f"Impossibile avviare il comando {display[:900]}: {exc}") from exc
         if proc.returncode:
             raise RuntimeError(f"{argv[0]} errore {proc.returncode}:\n"
                                f"{proc.stderr[-3000:]}\n{proc.stdout[-1200:]}")
@@ -304,14 +312,21 @@ class ZionApp(tk.Tk):
     def work(self, folder, task):
         try:
             env = {**os.environ, "PATH": locate_path()}
+            binaries = {}
             for name in ("git", "hcom", "claude", "codex"):
-                if not shutil.which(name, path=env["PATH"]):
+                path = shutil.which(name, path=env["PATH"])
+                if not path:
                     raise RuntimeError(f"{name} non trovato. Esegui INSTALLA_ZION.bat.")
-            repo = self.command(["git", "-C", str(folder), "rev-parse", "--show-toplevel"],
+                binaries[name] = str(Path(path).resolve())
+            env["ZION_GIT_BINARY"] = binaries["git"]
+            env["ZION_HCOM_BINARY"] = binaries["hcom"]
+            self.post("log", "zion", "Git: " + binaries["git"])
+            self.post("log", "zion", "hcom: " + binaries["hcom"])
+            repo = self.command([binaries["git"], "-C", str(folder), "rev-parse", "--show-toplevel"],
                                 env, folder, 15).strip()
             if Path(repo).resolve() != folder:
                 raise RuntimeError(f"Seleziona la radice del repository: {repo}")
-            dirty = self.command(["git", "-C", str(folder), "status", "--porcelain"],
+            dirty = self.command([binaries["git"], "-C", str(folder), "status", "--porcelain"],
                                  env, folder, 20)
             if any(not line[3:].replace("\\", "/").startswith(".zion/")
                    for line in dirty.splitlines()):
@@ -324,7 +339,7 @@ class ZionApp(tk.Tk):
                 self.post("status", f"Avvio {kind}...")
                 self.post("log", kind, "Avvio tramite hcom --headless.")
                 output = self.command(
-                    ["hcom", kind, "--headless", "--json", "--dir", str(folder)],
+                    [binaries["hcom"], kind, "--headless", "--json", "--dir", str(folder)],
                     env, folder, 90)
                 name = agent_name(output)
                 if not name:
@@ -336,7 +351,7 @@ class ZionApp(tk.Tk):
             if self.cancel.is_set():
                 return
             self.post("status", "Coordinamento in corso")
-            self.listen_events(env, folder)
+            self.listen_events(env, folder, binaries["hcom"])
             # Se la GUI usa pythonw.exe, lanciare il motore con python.exe:
             # pythonw non garantisce stdout/stderr leggibili dal coordinatore.
             engine = sys.executable
@@ -384,11 +399,11 @@ class ZionApp(tk.Tk):
             self.child = None
             self.post("done")
 
-    def listen_events(self, env, folder):
+    def listen_events(self, env, folder, hcom_binary):
         def loop():
             try:
                 self.events_child = subprocess.Popen(
-                    ["hcom", "events", "--follow"], cwd=folder, env=env,
+                    [hcom_binary, "events", "--follow"], cwd=folder, env=env,
                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                     text=True, encoding="utf-8", errors="replace",
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
