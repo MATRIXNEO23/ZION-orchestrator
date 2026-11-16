@@ -1,0 +1,102 @@
+name: ZION Codex app-server hooks Windows diagnostic
+on:
+  push:
+    branches: [test/windows-hcom-isolated-20261116]
+    paths:
+      - '.github/workflows/codex-hooks-windows-smoke.yml'
+  workflow_dispatch:
+jobs:
+  codex-hooks:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Codex CLI on temporary Windows runner
+        shell: pwsh
+        run: |
+          npm install -g @openai/codex
+          codex --version
+      - name: Probe actual Codex app-server hooks/list, no auth or model requests
+        shell: pwsh
+        run: |
+          @'
+          import json
+          import os
+          import queue
+          import shutil
+          import subprocess
+          import threading
+          import time
+
+          cli = shutil.which("codex.cmd") or shutil.which("codex")
+          assert cli, "Codex CLI missing"
+          args = ["cmd.exe", "/c", cli, "-c", "features.hooks=true",
+                  "app-server", "--listen", "stdio://"]
+          print("Testing Codex app-server initialize and hooks/list without model calls", flush=True)
+          process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                     errors="replace", bufsize=1)
+          out = queue.Queue()
+          errors = []
+          def reader():
+              for line in process.stdout:
+                  out.put(line)
+          def stderr_reader():
+              for line in process.stderr:
+                  if len(errors) < 50:
+                      errors.append(line.rstrip()[:300])
+          threading.Thread(target=reader, daemon=True).start()
+          threading.Thread(target=stderr_reader, daemon=True).start()
+
+          def call(obj, limit=15):
+              process.stdin.write(json.dumps(obj, separators=(",", ":")) + "\n")
+              process.stdin.flush()
+              expected = obj["id"]
+              started = time.monotonic()
+              deadline = started + limit
+              while time.monotonic() < deadline:
+                  try:
+                      line = out.get(timeout=max(.01, deadline - time.monotonic()))
+                  except queue.Empty:
+                      break
+                  try:
+                      data = json.loads(line)
+                  except ValueError:
+                      continue
+                  if data.get("id") == expected:
+                      elapsed = time.monotonic() - started
+                      print("id=%d elapsed=%.2fs error=%s" %
+                            (expected, elapsed, bool(data.get("error"))), flush=True)
+                      return data, elapsed
+              raise TimeoutError("No response for id=%d in %ss" % (expected, limit))
+          try:
+              response, first = call({
+                  "method":"initialize", "id":1,
+                  "params":{"clientInfo":{"name":"zion-smoke","title":"ZION Smoke","version":"0.1"},
+                            "capabilities":{"experimentalApi":True}}
+              })
+              if response.get("error"):
+                  raise RuntimeError("initialize returned error: " + str(response["error"])[:400])
+              process.stdin.write(json.dumps({"method":"initialized","params":{}}) + "\n")
+              process.stdin.flush()
+              response, second = call({
+                  "method":"hooks/list", "id":2,
+                  "params":{"cwds":[os.getcwd()]}
+              }, limit=25)
+              if response.get("error"):
+                  raise RuntimeError("hooks/list returned error: " + str(response["error"])[:400])
+              print("PASS: hooks/list responded on this clean Windows runner", flush=True)
+              if second > 10:
+                  print("WARNING: hooks/list exceeded hcom 0.7.31's hard-coded 10s limit", flush=True)
+          except BaseException as e:
+              print("FAIL:", str(e), flush=True)
+              print("Server stderr:", "\n".join(errors[-15:]), flush=True)
+              raise
+          finally:
+              process.kill()
+              process.wait(timeout=5)
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\codex_hooks_probe.py" -Encoding utf8
+          python "$env:RUNNER_TEMP\codex_hooks_probe.py"
