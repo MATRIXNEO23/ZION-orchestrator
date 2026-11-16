@@ -1,0 +1,4 @@
+.zion/
+__pycache__/
+*.py[cod]
+.venv/
