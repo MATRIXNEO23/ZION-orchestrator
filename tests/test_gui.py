@@ -152,7 +152,13 @@ class GuiUnitTests(unittest.TestCase):
             app.finish_close()
             if app.close_cleanup_thread:
                 app.close_cleanup_thread.join(timeout=5)
-            app.finish_close()
+            # The first call can already have completed closing the window.
+            try:
+                still_open = bool(app.winfo_exists())
+            except tkinter.TclError:
+                still_open = False
+            if still_open:
+                app.finish_close()
             self.assertEqual(calls, [
                 ["hcom.exe", "kill", "miso"],
                 ["hcom.exe", "kill", "nuve"]])
