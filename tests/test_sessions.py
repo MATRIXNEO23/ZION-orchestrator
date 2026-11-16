@@ -79,6 +79,20 @@ class OwnedAgentsTests(unittest.TestCase):
         self.assertFalse(blocked_status(statuses["kira"]))
         self.assertIn("launch_blocked", visible_status(statuses["rovo"]))
 
+    def test_wake_unacknowledged_is_stalled_even_if_listening(self):
+        info = {
+            "name": "kale",
+            "status": "listening",
+            "status_context": "tui:wake-unacknowledged",
+            "status_detail": "delivery paused; kill and resume this agent to retry",
+        }
+        self.assertTrue(blocked_status(info))
+        self.assertIn("wake-unacknowledged", visible_status(info))
+        info["status"] = "inactive"
+        self.assertTrue(blocked_status(info))
+        self.assertFalse(blocked_status({
+            "status": "listening", "status_context": "ready_observed"}))
+
     def test_statuses_reject_bad_json(self):
         sessions = OwnedHcomAgents(runner=lambda args, **kwargs:
                                    completed(args, stdout="not-json"))
