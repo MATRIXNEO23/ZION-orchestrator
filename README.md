@@ -34,6 +34,20 @@ Per una **sola diagnostica senza installazioni**, fai partire `INSTALLA_ZION.bat
 
 L'installer e pensato **solo per Windows** e va ancora verificato sul tuo PC reale; non assicura che ogni combinazione di hardware, policy aziendali o account sia compatibile.
 
+## Interfaccia grafica ZION (Windows)
+
+Esegui **AVVIA_ZION.bat** per aprire la finestra grafica, senza usare i comandi nel CMD.
+
+- Tre pannelli: **Codex a sinistra, ZION al centro, Claude a destra**. Vengono mostrati gli eventi hcom e il coordinamento effettivo. Non viene inventato output di agenti; i transcript completi non sono ancora visualizzati.
+- Le frecce tra i pannelli si animano quando viene inviato un incarico o ricevuto un rapporto.
+- Scegli la cartella Git del progetto, inserisci il compito e premi **Avvia lavoro**. Le richieste partono **solo dopo conferma** e possono consumare quota dei modelli.
+- Il pulsante **Errori e diagnostica** apre in qualunque momento una finestra dedicata, aggiornata automaticamente; in caso di errore si apre da sola. Il file completo è salvato nella cartella **logs** e resta disponibile anche dopo l'uscita.
+- **Ferma ZION** interrompe il processo coordinatore, ma non forza la chiusura delle sessioni Claude/Codex eventualmente già avviate. Non vengono cancellati database, file del progetto o cronologie.
+- Il collegamento hcom viene avviato sequenzialmente in modalità headless: è consigliato avere hcom **0.7.31 o successivo** per gli eventi live e l'output JSON. L'app non installa automaticamente aggiornamenti o modifica le credenziali.
+- **AVVIA_ZION_CMD.bat** conserva il vecchio avvio guidato con CMD per eventuale regressione.
+
+**Stato:** interfaccia verificabile tramite test automatici Windows, ma il funzionamento reale dell'integrazione hcom con Claude/Codex su ogni PC non è garantito. Se Codex segnala \`database is locked\` o un errore App Server, la finestra Errori mostrerà i dettagli e ZION si fermerà; non tenterà di eliminare o riparare automaticamente il database.
+
 ## Avvio su Windows (PowerShell) — alternativa manuale
 
 Se preferisci i passaggi manuali, scarica ZION e verifica i requisiti:
