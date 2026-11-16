@@ -101,7 +101,7 @@ class ZionTests(unittest.TestCase):
             self.assertIn("→", events[0]["prompt"])
             self.assertEqual(events[1]["summary"], "Letto → verificato")
             self.assertEqual(events[3]["summary"], "Revisione → OK")
-            self.assertIn(r"\\u2192", raw)
+            self.assertIn(r"\u2192", raw)
 
     def test_max_three_rounds_and_stop(self):
         with tempfile.TemporaryDirectory() as tmp:
