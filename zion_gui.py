@@ -228,6 +228,7 @@ class ZionApp(tk.Tk):
         self.error_view = None
         self.project = tk.StringVar()
         self.current = tk.StringVar(value="In attesa")
+        self.claude_model = tk.StringVar(value="haiku")
         self.agents = {"claude": "claude", "codex": "codex"}
         self.motion = {"codex": (0.0, 0), "claude": (0.0, 0)}
         self.create_ui()
@@ -247,6 +248,11 @@ class ZionApp(tk.Tk):
         ttk.Entry(top, textvariable=self.project).pack(side="left", fill="x", expand=True, padx=8)
         ttk.Button(top, text="Sfoglia", command=self.browse).pack(side="left")
         ttk.Button(top, text="Errori e diagnostica", command=self.show_errors).pack(side="left", padx=7)
+        tk.Label(top, text="Claude diretto · modello:", bg="#101721",
+                 fg="#d8e7ef").pack(side="left", padx=(9, 3))
+        ttk.Combobox(top, textvariable=self.claude_model,
+                     values=("haiku", "sonnet", "opus", "configured"),
+                     width=10, state="readonly").pack(side="left")
 
         body = tk.Frame(self, bg="#101721")
         body.pack(fill="both", expand=True, padx=12)
@@ -397,10 +403,12 @@ class ZionApp(tk.Tk):
             state = self.agent_hcom_state.get(role, "stato non ancora verificato")
             sent = self.agent_sent_at.get(role)
             if sent is None:
-                label_var.set("hcom: " + state[:85])
+                prefix = "CLI: " if role == "claude" and state.startswith("CLI") else "hcom: "
+                label_var.set(prefix + state[:85])
             else:
                 elapsed = max(0, int(time.monotonic() - sent))
-                label_var.set(f"hcom: {state[:48]} | rapporto atteso da "
+                prefix = "CLI: " if role == "claude" and state.startswith("CLI") else "hcom: "
+                label_var.set(f"{prefix}{state[:48]} | rapporto atteso da "
                               f"{elapsed // 60:02d}:{elapsed % 60:02d}")
         self._label_timer = self.after(1000, self.refresh_agent_labels)
 
@@ -458,9 +466,21 @@ class ZionApp(tk.Tk):
         proc = self.child
         if proc is not None and proc.poll() is None:
             try:
-                proc.terminate()
-            except OSError as exc:
+                if os.name == "nt":
+                    # Terminate the exact coordinator tree, including its
+                    # direct Claude CLI child, to avoid background quota usage.
+                    result = subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        capture_output=True, timeout=12,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    if result.returncode != 0 and proc.poll() is None:
+                        proc.terminate()
+                else:
+                    proc.terminate()
+            except (OSError, subprocess.TimeoutExpired) as exc:
                 self.post("log", "zion", f"Termine coordinatore: {exc}")
+                if proc.poll() is None:
+                    proc.terminate()
 
     def animate(self):
         moment = time.monotonic()
@@ -513,8 +533,9 @@ class ZionApp(tk.Tk):
         self.agent_sent_at.clear()
         self.agent_hcom_state.clear()
         self.monitor_stop = threading.Event()
+        model = self.claude_model.get()
         self.worker_thread = threading.Thread(
-            target=self.work, args=(folder.resolve(), instruction),
+            target=self.work, args=(folder.resolve(), instruction, model),
             daemon=True)
         self.worker_thread.start()
 
@@ -535,7 +556,7 @@ class ZionApp(tk.Tk):
                                f"{proc.stderr[-3000:]}\n{proc.stdout[-1200:]}")
         return proc.stdout
 
-    def work(self, folder, task):
+    def work(self, folder, task, model="haiku"):
         try:
             env = {**os.environ, "PATH": locate_path()}
             binaries = {}
@@ -546,6 +567,7 @@ class ZionApp(tk.Tk):
                 binaries[name] = str(Path(path).resolve())
             env["ZION_GIT_BINARY"] = binaries["git"]
             env["ZION_HCOM_BINARY"] = binaries["hcom"]
+            env["ZION_CLAUDE_BINARY"] = binaries["claude"]
             self.sessions.configure(binaries["hcom"], env, folder)
             self.post("log", "zion", "Git: " + binaries["git"])
             self.post("log", "zion", "hcom: " + binaries["hcom"])
@@ -571,7 +593,10 @@ class ZionApp(tk.Tk):
             if self.cancel.is_set():
                 return
             # Avvio sequenziale per ridurre gli accessi contemporanei a SQLite.
-            for kind in ("codex", "claude"):
+            # Claude Code -p runs directly after Codex is available.
+            # Do not start a Claude hcom PTY session: delivery is broken on
+            # this Windows setup (native mod / inject wake acknowledgement).
+            for kind in ("codex",):
                 if self.cancel.is_set():
                     return
                 self.post("status", f"Avvio {kind}...")
@@ -590,6 +615,10 @@ class ZionApp(tk.Tk):
                 time.sleep(1.5)
             if self.cancel.is_set():
                 return
+            self.agents["claude"] = "claude-cli"
+            self.post("agent_health", "claude", f"CLI diretta · modello {model}")
+            self.post("log", "claude",
+                      f"Claude Code -p diretto ({model}): nessuna sessione hcom avviata.")
             self.post("status", "Coordinamento in corso")
             self.listen_events(env, folder, binaries["hcom"])
             threading.Thread(target=self.monitor_agents,
@@ -605,7 +634,8 @@ class ZionApp(tk.Tk):
                     shutil.which("python", path=env["PATH"]) or engine)
             args = [engine, str(BASE / "zion.py"), "run", task,
                     "--project", str(folder), "--codex", self.agents["codex"],
-                    "--claude", self.agents["claude"]]
+                    "--claude", self.agents["claude"],
+                    "--claude-mode", "direct", "--claude-model", model]
             # The child is a Python process with stdout piped to the GUI.
             # Force UTF-8 even if Windows uses a legacy ANSI code page.
             engine_env = {**env, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
@@ -646,7 +676,12 @@ class ZionApp(tk.Tk):
                 is_err = any(word in line.lower() for word in (
                     "errore", "error", "database is locked", "preflight failed", "timeout"))
                 self.post("log", "zion", line, is_err)
-                if "claude_incaricato" in line:
+                if "claude_cli_avviato" in line:
+                    self.post("arrow", "claude", 1)
+                    self.post("agent_sent", "claude")
+                    self.post("log", "claude",
+                              "Claude Code -p avviato: attendo l'output strutturato.")
+                elif "claude_incaricato" in line:
                     self.post("arrow", "claude", 1)
                     self.post("agent_sent", "claude")
                     self.post("log", "claude",
