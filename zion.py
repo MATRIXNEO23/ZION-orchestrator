@@ -125,6 +125,105 @@ def send_hcom(agent: str, message: str) -> None:
         raise ZionError(f"Invio a {agent} fallito: {result.stderr.strip()[:500]}")
 
 
+CLAUDE_DIRECT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["ready", "blocked"]},
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+        "tests": {"type": "string"},
+    },
+    "required": ["status", "summary", "files_changed", "tests"],
+    "additionalProperties": False,
+}
+
+
+def direct_claude_prompt(task: str, issues: list[dict] | None) -> str:
+    """Claude -p returns structured output; Zion writes the report itself."""
+    assignment = (task[:3000] if issues is None else
+                  "Correggi SOLO questi problemi: " +
+                  json.dumps(issues, ensure_ascii=False)[:4500])
+    return (
+        "Sei Claude, worker di sviluppo per ZION. Lavora nella directory Git "
+        "corrente. COMPITO: " + assignment + "\n"
+        "Non contattare Codex e non creare altri agenti. "
+        "Non fare commit, push, cancellazioni o installazioni. "
+        "Rispetta le regole del compito: se e' di sola lettura, "
+        "non modificare file. Esegui solo verifiche necessarie. "
+        "Non scrivere report su disco: ZION salva il JSON di risposta. "
+        "Al termine restituisci tramite output strutturato: status=ready "
+        "se completo, blocked se serve assistenza; summary sintetico, "
+        "files_changed con percorsi reali, tests con l'esito. "
+        "Non dichiarare di aver effettuato verifiche non eseguite."
+    )
+
+
+def parse_claude_direct_result(output: str) -> tuple[dict, float | None]:
+    """Validate actual Claude -p JSON envelope; never mistake errors for success."""
+    try:
+        envelope = json.loads(output)
+    except (TypeError, ValueError) as exc:
+        raise ZionError("Claude CLI: risposta non valida (atteso JSON).") from exc
+    if not isinstance(envelope, dict):
+        raise ZionError("Claude CLI: risposta non e' un oggetto JSON.")
+    if envelope.get("is_error") or envelope.get("subtype") != "success":
+        detail = str(envelope.get("result") or envelope.get("subtype") or "errore")[:350]
+        raise ZionError("Claude CLI non ha completato il compito: " + detail)
+    report = envelope.get("structured_output")
+    if report is None:
+        # Fallback for CLI configurations that return JSON as textual result.
+        raw = envelope.get("result")
+        if isinstance(raw, str):
+            try:
+                report = json.loads(raw)
+            except ValueError as exc:
+                raise ZionError("Claude CLI: manca structured_output; result non e' JSON.") from exc
+    if not isinstance(report, dict):
+        raise ZionError("Claude CLI: structured_output non presente o non valido.")
+    if report.get("status") not in ("ready", "blocked"):
+        raise ZionError("Claude CLI: status report non valido.")
+    if not isinstance(report.get("summary"), str) or len(report["summary"]) > 500:
+        raise ZionError("Claude CLI: summary non valida.")
+    if (not isinstance(report.get("files_changed"), list)
+            or len(report["files_changed"]) > 30
+            or any(not isinstance(x, str) or len(x) > 180
+                   for x in report["files_changed"])):
+        raise ZionError("Claude CLI: files_changed non valido.")
+    if not isinstance(report.get("tests"), str) or len(report["tests"]) > 500:
+        raise ZionError("Claude CLI: tests non valido.")
+    cost = envelope.get("total_cost_usd")
+    return {key: report[key] for key in ("status", "summary", "files_changed", "tests")}, (
+        float(cost) if isinstance(cost, (int, float)) else None)
+
+
+def call_claude_direct(project: Path, task: str, issues: list[dict] | None,
+                       timeout: int, model: str = "haiku") -> tuple[dict, float | None]:
+    """Call Claude Code headlessly via stdin, no hcom wake/PTY or API key."""
+    if model not in {"haiku", "sonnet", "opus", "configured"}:
+        raise ZionError("Modello Claude non valido.")
+    command = [
+        binary("claude"), "-p", "--output-format", "json",
+        "--json-schema", json.dumps(CLAUDE_DIRECT_SCHEMA, separators=(",", ":")),
+        "--max-turns", "8", "--max-budget-usd", "0.75",
+    ]
+    if model != "configured":
+        command += ["--model", model]
+    try:
+        response = subprocess.run(
+            command, input=direct_claude_prompt(task, issues),
+            cwd=project, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired as exc:
+        raise ZionError(f"Claude CLI: timeout dopo {timeout}s.") from exc
+    except OSError as exc:
+        raise ZionError(f"Claude CLI: avvio non riuscito: {exc}") from exc
+    if response.returncode != 0:
+        raise ZionError("Claude CLI terminato con errore: " +
+                        (response.stderr.strip() or response.stdout.strip())[-500:])
+    return parse_claude_direct_result(response.stdout)
+
+
 def report_instruction(path: Path, run_id: str, round_no: int) -> str:
     return (
         f"Al termine salva SOLO un JSON UTF-8 valido in {path}, scrivendo prima "
@@ -182,8 +281,9 @@ def workflow(args: argparse.Namespace, send=send_hcom, wait=read_report) -> int:
     if args.claude == args.codex:
         raise ZionError("Claude e Codex devono avere due nomi diversi")
     git_preflight(project, args.allow_dirty)
+    direct = getattr(args, "claude_mode", "hcom") == "direct"
     if not args.dry_run:
-        hcom_preflight([args.claude, args.codex])
+        hcom_preflight([args.codex] if direct else [args.claude, args.codex])
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + secrets.token_hex(3)
     folder = project / ".zion" / "runs" / run_id
@@ -213,11 +313,24 @@ def workflow(args: argparse.Namespace, send=send_hcom, wait=read_report) -> int:
     try:
         for round_no in range(1, args.max_rounds + 1):
             dev_path = folder / f"claude-{round_no}.json"
-            dev_prompt = developer_prompt(args.task, issues, dev_path, run_id, round_no)
-            ui_event("prompt", "claude", round_no, prompt=dev_prompt)
-            send(args.claude, dev_prompt)
-            note("claude_incaricato", round_no)  # hcom send returned successfully; no delivery ack
-            dev = wait(dev_path, run_id, round_no, args.timeout, args.poll)
+            if direct:
+                dev_prompt = direct_claude_prompt(args.task, issues)
+                ui_event("prompt", "claude", round_no, prompt=dev_prompt)
+                print(f"[ZION] claude_cli_avviato (ciclo {round_no})", flush=True)
+                dev_data, cost = call_claude_direct(
+                    project, args.task, issues, args.timeout,
+                    getattr(args, "claude_model", "haiku"))
+                dev = {**dev_data, "run_id": run_id, "round": round_no}
+                atomic_json(dev_path, dev)
+                if cost is not None:
+                    print(f"[ZION] Costo stimato Claude CLI (list price): "
+                          f"USD {cost:.4f}", flush=True)
+            else:
+                dev_prompt = developer_prompt(args.task, issues, dev_path, run_id, round_no)
+                ui_event("prompt", "claude", round_no, prompt=dev_prompt)
+                send(args.claude, dev_prompt)
+                note("claude_incaricato", round_no)
+                dev = wait(dev_path, run_id, round_no, args.timeout, args.poll)
             note("claude_rapporto_ricevuto", round_no)
             ui_event("report", "claude", round_no,
                      status=str(dev.get("status", ""))[:32],
@@ -283,6 +396,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--project", default=".", help="radice della repository da modificare")
     run.add_argument("--claude", default="claude", help="nome agente trovato con hcom list")
     run.add_argument("--codex", default="codex", help="nome agente trovato con hcom list")
+    run.add_argument("--claude-mode", choices=("hcom", "direct"), default="hcom",
+                     help="hcom classico oppure Claude CLI -p senza PTY")
+    run.add_argument("--claude-model", choices=("haiku", "sonnet", "opus", "configured"),
+                     default="haiku", help="modello per la modalita direct")
     run.add_argument("--max-rounds", type=int, default=3, choices=(1, 2, 3))
     run.add_argument("--timeout", type=int, default=1800, help="secondi massimi per rapporto")
     run.add_argument("--poll", type=float, default=2.0)
