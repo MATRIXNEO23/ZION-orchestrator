@@ -1,0 +1,26 @@
+name: ZION Windows - direct Claude CLI and hcom Codex
+on:
+  push:
+    branches: [feature/claude-direct-cli-20261116]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate Python sources
+        shell: pwsh
+        run: |
+          python -m py_compile zion.py zion_gui.py zion_sessions.py
+      - name: Full unit and desktop tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -v
+      - name: Sanity test CLI startup (no authenticated model calls)
+        shell: pwsh
+        run: |
+          python zion.py doctor
