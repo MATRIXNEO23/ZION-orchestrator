@@ -6,12 +6,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 from zion import (
-    ZionError, compact_issues, developer_prompt, issue_digest,
+    ZionError, binary, compact_issues, developer_prompt, issue_digest,
     read_report, reviewer_prompt, workflow
 )
 
 
 class ZionTests(unittest.TestCase):
+    def test_gui_resolved_hcom_path_is_reused(self):
+        with patch.dict("os.environ", {"ZION_HCOM_BINARY": r"C:\\tools\\hcom.exe"}):
+            self.assertEqual(binary("hcom"), r"C:\\tools\\hcom.exe")
+
     def test_compact_issues_caps_size(self):
         issues = [{"file": "a.py", "line": 12, "severity": "high",
                    "problem": "x" * 900} for _ in range(30)]
