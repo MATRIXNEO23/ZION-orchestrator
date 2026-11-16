@@ -166,6 +166,10 @@ def parse_claude_direct_result(output: str) -> tuple[dict, float | None]:
         raise ZionError("Claude CLI: risposta non valida (atteso JSON).") from exc
     if not isinstance(envelope, dict):
         raise ZionError("Claude CLI: risposta non e' un oggetto JSON.")
+    if envelope.get("permission_denials"):
+        raise ZionError("Claude CLI: strumenti negati dalle autorizzazioni. "
+                        "Controlla la configurazione dei permessi; "
+                        "ZION non segnala successo senza verifiche.")
     if envelope.get("is_error") or envelope.get("subtype") != "success":
         detail = str(envelope.get("result") or envelope.get("subtype") or "errore")[:350]
         raise ZionError("Claude CLI non ha completato il compito: " + detail)
