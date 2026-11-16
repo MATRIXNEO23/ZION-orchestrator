@@ -109,7 +109,8 @@ def blocked_status(info):
     status = str(info.get("status") or "").lower()
     context = str(info.get("status_context") or "").lower()
     return (status.startswith("blocked")
-            or "launch_blocked" in context)
+            or "launch_blocked" in context
+            or "wake-unacknowledged" in context)
 
 
 def visible_status(info):
