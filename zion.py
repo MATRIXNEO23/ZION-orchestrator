@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -21,6 +22,11 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 class ZionError(Exception):
     pass
+
+
+def binary(name: str) -> str:
+    """Use the same absolute executable paths validated by the GUI."""
+    return os.environ.get(f"ZION_{name.upper()}_BINARY") or shutil.which(name) or name
 
 
 def now() -> str:
@@ -76,11 +82,11 @@ def issue_digest(issues: list[dict]) -> str:
 def git_preflight(project: Path, allow_dirty: bool) -> None:
     try:
         root = subprocess.run(
-            ["git", "-C", str(project), "rev-parse", "--show-toplevel"],
+            [binary("git"), "-C", str(project), "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, check=True, timeout=15
         ).stdout.strip()
         result = subprocess.run(
-            ["git", "-C", str(project), "status", "--porcelain", "--untracked-files=all"],
+            [binary("git"), "-C", str(project), "status", "--porcelain", "--untracked-files=all"],
             capture_output=True, text=True, check=True, timeout=15
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -95,13 +101,13 @@ def git_preflight(project: Path, allow_dirty: bool) -> None:
 
 
 def hcom_preflight(names: list[str]) -> None:
-    if not shutil.which("hcom"):
+    if not os.environ.get("ZION_HCOM_BINARY") and not shutil.which("hcom"):
         raise ZionError("hcom non trovato nel PATH. Installa prima hcom.")
     for name in names:
         if not NAME_RE.fullmatch(name):
             raise ZionError(f"Nome agente non valido: {name}")
         result = subprocess.run(
-            ["hcom", "list", name, "status"], capture_output=True, text=True, timeout=20
+            [binary("hcom"), "list", name, "status"], capture_output=True, text=True, timeout=20
         )
         if result.returncode != 0 or result.stdout.strip().lower() in {"gone", "inactive"}:
             raise ZionError(f"Agente hcom non attivo: {name}. Verifica con: hcom list")
@@ -109,7 +115,7 @@ def hcom_preflight(names: list[str]) -> None:
 
 def send_hcom(agent: str, message: str) -> None:
     result = subprocess.run(
-        ["hcom", "send", "-b", "@" + agent, "--", message],
+        [binary("hcom"), "send", "-b", "@" + agent, "--", message],
         capture_output=True, text=True, timeout=45
     )
     if result.returncode != 0:
