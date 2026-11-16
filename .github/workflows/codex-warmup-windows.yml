@@ -23,10 +23,10 @@ jobs:
           codex --version
           @'
           from pathlib import Path
-          import os, time
+          import shutil
           from zion_gui import warm_codex_app_server
-          cli = str(Path(os.environ["APPDATA"]) / "npm" / "codex.cmd")
-          assert Path(cli).exists(), cli
+          cli = shutil.which("codex.cmd") or shutil.which("codex")
+          assert cli and Path(cli).exists(), "codex executable not found on PATH"
           first, second = warm_codex_app_server(cli, Path.cwd(), timeout=45)
           print("Warmup initialize: %.2fs" % first)
           print("Warmup hooks/list: %.2fs" % second)
