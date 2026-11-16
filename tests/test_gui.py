@@ -5,6 +5,25 @@ class GuiUnitTests(unittest.TestCase):
     def test_extract_codex_agent(self):
         self.assertEqual(agent_name('{"name":"codex-1"}'), "codex-1")
 
+    def test_hcom_real_headless_launch_response(self):
+        """Regression: hcom 0.7.31 returns a names list, not name."""
+        report = ('{"action":"launch","background":true,"batch_id":"1e32ebde",'
+                  '"errors":[],"failed":0,"launched":1,"names":["zumi"],'
+                  '"readiness":null,"requested":1,"tool":"codex"}')
+        self.assertEqual(agent_name(report), "zumi")
+
+    def test_hcom_launch_rejects_missing_or_ambiguous_agents(self):
+        self.assertIsNone(agent_name(
+            '{"action":"launch","errors":[],"failed":0,"launched":0,"names":[]}'))
+        self.assertIsNone(agent_name(
+            '{"action":"launch","errors":[],"failed":0,"launched":2,"names":["a","b"]}'))
+        self.assertIsNone(agent_name(
+            '{"action":"launch","errors":[],"failed":1,"launched":1,"names":["a"]}'))
+        self.assertIsNone(agent_name(
+            '{"action":"launch","errors":["failure"],"failed":0,"launched":1,"names":["a"]}'))
+        self.assertIsNone(agent_name(
+            '{"action":"launch","errors":[],"failed":0,"launched":1,"names":["bad name"]}'))
+
     def test_nested_agent(self):
         self.assertEqual(agent_name('{"agent":{"agent_name":"claude-22"}}'), "claude-22")
 
