@@ -70,6 +70,14 @@ class ZionTests(unittest.TestCase):
                     "status": "pass", "summary": "OK",
                     "files_changed": [], "tests": ""
                 }}))
+        with self.assertRaisesRegex(ZionError, "strumenti negati"):
+            parse_claude_direct_result(json.dumps({
+                "subtype": "success", "is_error": False,
+                "permission_denials": [{"tool": "Read"}],
+                "structured_output": {
+                    "status": "ready", "summary": "OK",
+                    "files_changed": [], "tests": ""
+                }}))
 
     def test_workflow_direct_uses_hcom_only_for_codex(self):
         with tempfile.TemporaryDirectory() as tmp:
