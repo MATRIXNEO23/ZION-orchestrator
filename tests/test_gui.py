@@ -45,6 +45,38 @@ class GuiUnitTests(unittest.TestCase):
             app.destroy()
 
 
+    def test_diagnostics_button_exists_and_report_view_is_connected(self):
+        import tkinter
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from zion_gui import ZionApp
+        try:
+            app = ZionApp()
+        except tkinter.TclError as ex:
+            self.skipTest("Desktop UI unavailable: " + str(ex))
+        try:
+            app.withdraw()
+            self.assertEqual(app.test_button.cget("text"), "Fai test")
+            self.assertEqual(app.copy_test_button.cget("text"), "Copia report")
+            with tempfile.TemporaryDirectory() as directory:
+                report = Path(directory) / "diagnostica_test.log"
+                report.write_text("[OK] Codex login status: autenticato", encoding="utf-8")
+                with patch("zion_gui.collect_diagnostics", return_value=[
+                        ("OK", "Login Codex", "Autenticazione locale rilevata"),
+                        ("ATTENZIONE", "Limite", "Test reale non eseguito")
+                    ]), patch("zion_gui.save_report", return_value=report):
+                    app._diagnose(None)
+                    app.drain()
+                self.assertEqual(app.latest_diagnostic, report)
+                self.assertIn("0 errori, 1 avvisi", app.current.get())
+                with patch("zion_gui.messagebox.showinfo"):
+                    app.copy_diagnostic()
+                self.assertIn("autenticato", app.clipboard_get())
+        finally:
+            app.destroy()
+
+
     def test_launch_error_names_failing_command(self):
         import tkinter
         from unittest.mock import patch
