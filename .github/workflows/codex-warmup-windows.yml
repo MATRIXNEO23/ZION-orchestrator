@@ -1,0 +1,48 @@
+name: Zion Windows Codex warmup integration
+on:
+  push:
+    branches: [fix/codex-cold-start-20261116]
+jobs:
+  warmup:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python checks
+        shell: pwsh
+        run: |
+          python -m py_compile zion.py zion_gui.py
+          python -m unittest discover -s tests -v
+      - name: Install actual Codex CLI and run warmup with no model calls
+        shell: pwsh
+        run: |
+          npm install -g @openai/codex
+          codex --version
+          @'
+          from pathlib import Path
+          import os, time
+          from zion_gui import warm_codex_app_server
+          cli = str(Path(os.environ["APPDATA"]) / "npm" / "codex.cmd")
+          assert Path(cli).exists(), cli
+          first, second = warm_codex_app_server(cli, Path.cwd(), timeout=45)
+          print("Warmup initialize: %.2fs" % first)
+          print("Warmup hooks/list: %.2fs" % second)
+          assert first < 45 and second < 45
+          print("PASS: warmup returned and closed its processes")
+          '@ | Set-Content -Path test_live_warmup.py -Encoding utf8
+          python test_live_warmup.py
+      - name: Verify hcom 0.7.31 per-run Codex preflight
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check uv
+          uv tool install hcom
+          $hcom = Join-Path (& uv tool dir --bin).Trim() "hcom.exe"
+          & $hcom --version
+          $r = & $hcom codex --headless --json --dir "$env:GITHUB_WORKSPACE"
+          Write-Host $r
+          if ($LASTEXITCODE -ne 0) { throw "hcom Codex launch failed" }
+          $v = $r | ConvertFrom-Json
+          if ($v.failed -gt 0 -or $v.launched -lt 1) { throw "hcom reported no started agents" }
