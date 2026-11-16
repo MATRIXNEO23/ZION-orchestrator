@@ -85,6 +85,110 @@ def error_hint(message):
     return "Controlla le righe precedenti e il log completo nella cartella logs."
 
 
+
+def warm_codex_app_server(codex_binary, folder, timeout=40):
+    """Warm up Codex app-server on cold Windows installs, without model calls.
+
+    hcom 0.7.31 gives each app-server reply a fixed 10 seconds. On slower PCs
+    the first hooks/list may take longer, while subsequent requests are fast.
+    Use exactly the protocol methods needed for a harmless startup probe.
+    """
+    argv = [str(codex_binary), "-c", "features.hooks=true",
+            "app-server", "--listen", "stdio://"]
+    if os.name == "nt" and str(codex_binary).lower().endswith((".cmd", ".bat")):
+        argv = ["cmd.exe", "/d", "/c"] + argv
+    proc = subprocess.Popen(
+        argv, cwd=str(folder), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+        bufsize=1, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    messages = queue.Queue()
+    stderr_lines = []
+
+    def read_stdout():
+        try:
+            for line in proc.stdout:
+                messages.put(line)
+        finally:
+            messages.put(None)
+
+    def read_stderr():
+        for line in proc.stderr:
+            if len(stderr_lines) < 20:
+                stderr_lines.append(line.strip()[:250])
+
+    stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+    stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+    deadline = time.monotonic() + timeout
+
+    def rpc(payload):
+        start = time.monotonic()
+        proc.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        proc.stdin.flush()
+        while time.monotonic() < deadline:
+            try:
+                line = messages.get(timeout=max(.01, deadline - time.monotonic()))
+            except queue.Empty:
+                break
+            if line is None:
+                break
+            try:
+                result = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(result, dict) and result.get("id") == payload["id"]:
+                if result.get("error"):
+                    raise RuntimeError(
+                        f"Codex app-server {payload['method']}: "
+                        f"{str(result['error'])[:350]}")
+                return time.monotonic() - start
+        extra = (" | stderr: " + " / ".join(stderr_lines[-3:])) if stderr_lines else ""
+        raise RuntimeError(
+            f"Codex app-server {payload['method']} senza risposta entro "
+            f"{timeout}s{extra}")
+
+    try:
+        first = rpc({
+            "method": "initialize", "id": 1,
+            "params": {
+                "clientInfo": {"name": "zion", "title": "Zion preflight",
+                               "version": "0.2.0"},
+                "capabilities": {"experimentalApi": True},
+            },
+        })
+        proc.stdin.write('{"method":"initialized","params":{}}\n')
+        proc.stdin.flush()
+        second = rpc({"method": "hooks/list", "id": 2,
+                      "params": {"cwds": [str(folder)]}})
+        return first, second
+    finally:
+        # Close stdin first: Codex should exit when the protocol closes.
+        # Killing only cmd.exe can otherwise leave a child with an open cwd.
+        if proc.stdin and not proc.stdin.closed:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=4)
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True, text=True, timeout=8, check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=4)
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
+
+
 class ZionApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -332,6 +436,17 @@ class ZionApp(tk.Tk):
                    for line in dirty.splitlines()):
                 raise RuntimeError("Ci sono modifiche locali non salvate: "
                                    "ZION si ferma per evitare sovrascritture.")
+            # Warm up Codex before hcom's 10-second hooks/list preflight.
+            # This sends no model prompts and does not edit project files.
+            if self.cancel.is_set():
+                return
+            self.post("status", "Preparo Codex (primo avvio)...")
+            self.post("log", "zion", "Preavvio Codex app-server: nessuna chiamata ai modelli.")
+            init_sec, hooks_sec = warm_codex_app_server(binaries["codex"], folder)
+            self.post("log", "zion", f"App-server pronto: initialize={init_sec:.2f}s, "
+                                    f"hooks/list={hooks_sec:.2f}s.")
+            if self.cancel.is_set():
+                return
             # Avvio sequenziale per ridurre gli accessi contemporanei a SQLite.
             for kind in ("codex", "claude"):
                 if self.cancel.is_set():
