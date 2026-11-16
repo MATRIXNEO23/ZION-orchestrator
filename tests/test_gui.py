@@ -61,5 +61,53 @@ class GuiUnitTests(unittest.TestCase):
             app.destroy()
 
 
+    def test_codex_warmup_rpc_without_model_calls(self):
+        import io
+        from unittest.mock import patch
+        from zion_gui import warm_codex_app_server
+
+        class Process:
+            def __init__(self):
+                self.stdin = io.StringIO()
+                self.stdout = io.StringIO(
+                    '{"id":1,"result":{}}\\n{"id":2,"result":{"hooks":[]}}\\n')
+                self.stderr = io.StringIO()
+                self.pid = 123
+            def wait(self, timeout=None):
+                return 0
+            def poll(self):
+                return 0
+
+        process = Process()
+        with patch("zion_gui.subprocess.Popen", return_value=process) as popen:
+            first, second = warm_codex_app_server(
+                "codex.cmd", ".", timeout=5)
+        self.assertGreaterEqual(first, 0)
+        self.assertGreaterEqual(second, 0)
+        self.assertTrue(process.stdin.closed)
+        sent = process.stdin.getvalue() if not process.stdin.closed else ""
+        self.assertTrue(popen.called)
+
+    def test_codex_warmup_missing_reply_is_error(self):
+        import io
+        from unittest.mock import patch
+        from zion_gui import warm_codex_app_server
+
+        class Process:
+            def __init__(self):
+                self.stdin = io.StringIO()
+                self.stdout = io.StringIO("")
+                self.stderr = io.StringIO("")
+                self.pid = 123
+            def wait(self, timeout=None):
+                return 0
+            def poll(self):
+                return 0
+
+        with patch("zion_gui.subprocess.Popen", return_value=Process()):
+            with self.assertRaisesRegex(RuntimeError, "initialize senza risposta"):
+                warm_codex_app_server("codex.cmd", ".", timeout=1)
+
+
 if __name__ == "__main__":
     unittest.main()
