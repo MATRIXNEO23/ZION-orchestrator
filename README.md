@@ -21,6 +21,33 @@ Nessuna terza IA: ZION usa soltanto Python standard library. hcom gestisce messa
 - Claude e Codex richiedono autenticazione personale e un accesso valido ai rispettivi servizi; verificare separatamente abbonamenti e fatturazione.
 - ZION non chiede credenziali o chiavi API e non installa nuovi componenti in modalita `/check`.
 
+## Modalità sperimentale Claude diretto + Codex hcom
+
+La GUI sperimentale avvia **solo Codex tramite hcom**. Per Claude usa
+`claude.cmd -p --output-format json --json-schema ...` in modalità non interattiva.
+Non richiede le modalità native/inject di hcom per Claude, che in alcune installazioni
+Windows non confermano la consegna. Usa l'autenticazione già presente in Claude Code:
+non aggiunge chiavi API.
+
+- **Scelta modello** nella finestra: `haiku` (predefinito e più economico),
+  `sonnet`, `opus` oppure `configured` per usare il modello già scelto in Claude.
+  La qualità di Haiku può essere inferiore per lavori complessi.
+- Un incarico Claude ha **massimo 8 turni** e un limite stimato di **0,75 USD**
+  (`--max-budget-usd`). Il limite si basa sul costo stimato lato Claude CLI,
+  non garantisce un tetto effettivo di addebito né l'equivalenza con la quota Pro.
+- Il rapporto viene restituito da Claude come **JSON strutturato** e salvato da Zion
+  in `.zion/runs/`, senza un secondo invio tramite hcom. Solo dopo viene incaricato
+  Codex via hcom per la revisione.
+- In caso di arresto manuale la GUI chiude l'albero dei processi del coordinatore,
+  incluso Claude CLI, e termina gli agenti hcom creati da Zion. Non chiude altri
+  processi Claude avviati autonomamente.
+- La GUI è in **collaudo**: il comportamento di Claude CLI `--json-schema` su
+  account reali, autorizzazioni file e invio della revisione a Codex devono essere
+  verificati sul PC dell'utente. I test automatici non effettuano chiamate ai modelli.
+
+La modalità classica `hcom` resta disponibile dall'interfaccia testuale:
+`python zion.py run "compito" --claude-mode hcom`.
+
 ## Installazione e diagnosi automatica su Windows (consigliata)
 
 Scarica il repository come ZIP da GitHub, estrailo in una cartella e fai doppio clic su **`INSTALLA_ZION.bat`**.
@@ -43,7 +70,7 @@ Esegui **AVVIA_ZION.bat** per aprire la finestra grafica, senza usare i comandi 
 - Le frecce tra i pannelli si animano quando viene inviato un incarico o ricevuto un rapporto.
 - Scegli la cartella Git del progetto, inserisci il compito e premi **Avvia lavoro**. Le richieste partono **solo dopo conferma** e possono consumare quota dei modelli.
 - Il pulsante **Errori e diagnostica** apre in qualunque momento una finestra dedicata, aggiornata automaticamente; in caso di errore si apre da sola. Il file completo è salvato nella cartella **logs** e resta disponibile anche dopo l'uscita.
-- **Ferma ZION**, il pulsante **X** e il completamento del compito fermano il coordinatore e chiudono con `hcom kill NOME` **solo le sessioni lanciate da questa finestra ZION**. Le sessioni precedenti o create esternamente non vengono toccate. Se la chiusura non riesce, l'app lo segnala e permette di riprovare. Non usa `kill all`, né cancella database, file del progetto o cronologie.
+- **Ferma ZION**, il pulsante **X** e il completamento del compito fermano il coordinatore, chiudono il processo Claude CLI se in esecuzione e terminano con `hcom kill NOME` **solo le sessioni hcom lanciate da questa finestra ZION**. Le sessioni precedenti o create esternamente non vengono toccate. Se la chiusura non riesce, l'app lo segnala e permette di riprovare. Non usa `kill all`, né cancella database, file del progetto o cronologie.
 - Durante la chiusura la finestra aspetta che eventuali avvii in corso si concludano, per evitare di lasciare agenti orfani. La chiusura forzata dal Task Manager o un arresto del PC non sono recuperabili in modo garantito.
 - Il collegamento hcom viene avviato sequenzialmente in modalità headless: è consigliato avere hcom **0.7.31 o successivo** per gli eventi live e l'output JSON. L'app non installa automaticamente aggiornamenti o modifica le credenziali.
 - **AVVIA_ZION_CMD.bat** conserva il vecchio avvio guidato con CMD per eventuale regressione.
