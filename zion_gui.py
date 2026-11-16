@@ -413,11 +413,16 @@ class ZionApp(tk.Tk):
                     self.post("agent_health", role, visible_status(info))
                     if blocked_status(info):
                         blocked_counts[role] = blocked_counts.get(role, 0) + 1
-                        if blocked_counts[role] >= 2:
+                        detail = visible_status(info).lower()
+                        # A trust/permission prompt can be resolved by the user.
+                        # Stop automatically only for the known disconnected mod.
+                        if (blocked_counts[role] >= 2 and
+                                ("mod never connected" in detail or
+                                 "mod-unavailable" in detail)):
                             self.post("error",
-                                      f"{role} ({name}) risulta bloccato in hcom: "
+                                      f"{role} ({name}) non collegato a hcom: "
                                       f"{visible_status(info)}. "
-                                      "ZION interrompe l'attesa e chiude i propri agenti.")
+                                      "ZION termina la richiesta e i propri agenti.")
                             self.cancel.set()
                             proc = self.child
                             if proc is not None and proc.poll() is None:
