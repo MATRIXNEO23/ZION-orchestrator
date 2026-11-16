@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
+from zion_sessions import OwnedHcomAgents, blocked_status, visible_status
 
 BASE = Path(__file__).resolve().parent
 LOG_DIR = BASE / "logs"
@@ -213,6 +214,14 @@ class ZionApp(tk.Tk):
         self.running = False
         self.child = None
         self.events_child = None
+        self.sessions = OwnedHcomAgents()
+        self.worker_thread = None
+        self.monitor_stop = threading.Event()
+        self.closing = False
+        self.close_cleanup_thread = None
+        self.agent_sent_at = {}
+        self.agent_hcom_state = {}
+        self.agent_labels = {}
         self.logfile = LOG_DIR / ("zion_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".log")
         self.errors = []
         self.error_window = None
@@ -224,6 +233,7 @@ class ZionApp(tk.Tk):
         self.create_ui()
         self.after(85, self.drain)
         self.after(70, self.animate)
+        self.after(1000, self.refresh_agent_labels)
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self.log("zion", "Pronto. Nessuna richiesta inviata alle IA.")
 
@@ -254,6 +264,12 @@ class ZionApp(tk.Tk):
             frame.grid(row=0, column=index, sticky="nsew")
             tk.Label(frame, text=title, bg="#182637", fg="#e6f2f5",
                      font=("Segoe UI", 11, "bold"), pady=9).pack(fill="x")
+            if role in ("claude", "codex"):
+                label_var = tk.StringVar(value="hcom: non avviato")
+                self.agent_labels[role] = label_var
+                tk.Label(frame, textvariable=label_var, bg="#182637",
+                         fg="#a4c5d3", font=("Segoe UI", 9),
+                         anchor="w").pack(fill="x", padx=8, pady=(0, 6))
             text = scrolledtext.ScrolledText(frame, state="disabled", wrap="word",
                                              bg="#0f1a26", fg="#d6e7f1",
                                              font=("Consolas", 9), relief="flat",
@@ -316,7 +332,7 @@ class ZionApp(tk.Tk):
             anchor="e", padx=12, pady=10)
 
     def log(self, source, message, is_error=False):
-        text = str(message).strip()[:3800]
+        text = str(message).strip()[:8000]
         entry = f"[{datetime.now():%H:%M:%S}] [{source.upper()}] {text}"
         with self.logfile.open("a", encoding="utf-8") as stream:
             stream.write(entry + "\n")
@@ -356,11 +372,82 @@ class ZionApp(tk.Tk):
                 self.current.set(data[0])
             elif event == "arrow":
                 self.motion[data[0]] = (time.monotonic(), data[1])
+            elif event == "agent_sent":
+                self.agent_sent_at[data[0]] = time.monotonic()
+            elif event == "agent_health":
+                role, health = data
+                if self.agent_hcom_state.get(role) != health:
+                    self.agent_hcom_state[role] = health
+                    self.log(role, "Stato rilevato da hcom: " + health)
             elif event == "done":
                 self.running = False
                 self.go.configure(state="normal")
                 self.stop_button.configure(state="disabled")
         self.after(85, self.drain)
+
+    def refresh_agent_labels(self):
+        """Show observed hcom state and how long since the instruction was sent."""
+        if self.closing:
+            return
+        for role, label_var in self.agent_labels.items():
+            state = self.agent_hcom_state.get(role, "stato non ancora verificato")
+            sent = self.agent_sent_at.get(role)
+            if sent is None:
+                label_var.set("hcom: " + state[:85])
+            else:
+                elapsed = max(0, int(time.monotonic() - sent))
+                label_var.set(f"hcom: {state[:48]} | rapporto atteso da "
+                              f"{elapsed // 60:02d}:{elapsed % 60:02d}")
+        self.after(1000, self.refresh_agent_labels)
+
+    def monitor_agents(self, stop_event):
+        """Read actual agent state; report launch_blocked instead of waiting 30m."""
+        blocked_counts = {}
+        while not stop_event.is_set() and not self.cancel.is_set():
+            try:
+                statuses = self.sessions.statuses()
+                for role, name in self.sessions.snapshot().items():
+                    info = statuses.get(name)
+                    if info is None:
+                        continue
+                    self.post("agent_health", role, visible_status(info))
+                    if blocked_status(info):
+                        blocked_counts[role] = blocked_counts.get(role, 0) + 1
+                        if blocked_counts[role] >= 2:
+                            self.post("error",
+                                      f"{role} ({name}) risulta bloccato in hcom: "
+                                      f"{visible_status(info)}. "
+                                      "ZION interrompe l'attesa e chiude i propri agenti.")
+                            self.cancel.set()
+                            proc = self.child
+                            if proc is not None and proc.poll() is None:
+                                proc.terminate()
+                            break
+                    else:
+                        blocked_counts[role] = 0
+            except Exception as exc:
+                self.post("log", "zion",
+                          f"Monitor hcom momentaneamente non disponibile: {exc}")
+            stop_event.wait(4)
+
+    def cleanup_agents(self):
+        """Stop only agents registered by this GUI, on success, stop, or close."""
+        for role, name, success, detail in self.sessions.cleanup():
+            if success:
+                self.post("log", role, f"Sessione hcom {name} chiusa da ZION.")
+            else:
+                self.post("error",
+                          f"Chiusura agente {role} ({name}) non riuscita: {detail}")
+
+    def request_stop(self):
+        self.cancel.set()
+        self.monitor_stop.set()
+        proc = self.child
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError as exc:
+                self.post("log", "zion", f"Termine coordinatore: {exc}")
 
     def animate(self):
         moment = time.monotonic()
@@ -385,7 +472,12 @@ class ZionApp(tk.Tk):
         self.after(70, self.animate)
 
     def start(self):
-        if self.running:
+        if self.running or self.closing:
+            return
+        if self.sessions.snapshot():
+            messagebox.showerror(
+                "ZION", "Alcuni agenti del lavoro precedente non sono stati "
+                "chiusi. Controlla la diagnostica prima di avviare altri agenti.")
             return
         folder = Path(self.project.get().strip().strip('"')).expanduser()
         instruction = self.task.get("1.0", "end").strip()
@@ -405,8 +497,13 @@ class ZionApp(tk.Tk):
         self.current.set("Avvio agenti...")
         self.go.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        threading.Thread(target=self.work, args=(folder.resolve(), instruction),
-                         daemon=True).start()
+        self.agent_sent_at.clear()
+        self.agent_hcom_state.clear()
+        self.monitor_stop = threading.Event()
+        self.worker_thread = threading.Thread(
+            target=self.work, args=(folder.resolve(), instruction),
+            daemon=True)
+        self.worker_thread.start()
 
     def command(self, argv, env, cwd, timeout=90):
         display = subprocess.list2cmdline([str(arg) for arg in argv])
@@ -436,6 +533,7 @@ class ZionApp(tk.Tk):
                 binaries[name] = str(Path(path).resolve())
             env["ZION_GIT_BINARY"] = binaries["git"]
             env["ZION_HCOM_BINARY"] = binaries["hcom"]
+            self.sessions.configure(binaries["hcom"], env, folder)
             self.post("log", "zion", "Git: " + binaries["git"])
             self.post("log", "zion", "hcom: " + binaries["hcom"])
             repo = self.command([binaries["git"], "-C", str(folder), "rev-parse", "--show-toplevel"],
@@ -472,13 +570,17 @@ class ZionApp(tk.Tk):
                 if not name:
                     raise RuntimeError(f"hcom non ha restituito un nome per {kind}. "
                                        f"Output: {output[-1200:]}")
+                self.sessions.register(kind, name)
                 self.agents[kind] = name
-                self.post("log", kind, f"Agente pronto: {name}")
+                self.post("log", kind,
+                          f"Processo agente avviato: {name}. Stato operativo da verificare.")
                 time.sleep(1.5)
             if self.cancel.is_set():
                 return
             self.post("status", "Coordinamento in corso")
             self.listen_events(env, folder, binaries["hcom"])
+            threading.Thread(target=self.monitor_agents,
+                             args=(self.monitor_stop,), daemon=True).start()
             # Se la GUI usa pythonw.exe, lanciare il motore con python.exe:
             # pythonw non garantisce stdout/stderr leggibili dal coordinatore.
             engine = sys.executable
@@ -510,7 +612,7 @@ class ZionApp(tk.Tk):
                     if event.get("type") == "prompt":
                         prompt = str(event.get("prompt", ""))[:5000]
                         self.post("log", kind,
-                                  f"COMPITO INVIATO A {kind.upper()} (ciclo {event.get('round')}):\\n"
+                                  f"COMPITO PREPARATO PER {kind.upper()} (ciclo {event.get('round')}):\n"
                                   + prompt)
                         self.post("log", kind,
                                   "IN ATTESA DI RISCONTRO. L'invio non conferma "
@@ -526,12 +628,16 @@ class ZionApp(tk.Tk):
                 self.post("log", "zion", line, is_err)
                 if "claude_incaricato" in line:
                     self.post("arrow", "claude", 1)
-                    self.post("log", "claude", "Invio confermato da hcom, risposta non ancora ricevuta.")
+                    self.post("agent_sent", "claude")
+                    self.post("log", "claude",
+                              "Messaggio inviato a hcom. Esecuzione non ancora confermata.")
                 elif "claude_rapporto_ricevuto" in line or "claude_bloccato" in line:
                     self.post("arrow", "claude", -1)
                 elif "codex_incaricato" in line:
                     self.post("arrow", "codex", -1)
-                    self.post("log", "codex", "Invio della revisione confermato da hcom.")
+                    self.post("agent_sent", "codex")
+                    self.post("log", "codex",
+                              "Revisione inviata a hcom. Esecuzione non ancora confermata.")
                 elif "codex_rapporto_ricevuto" in line or "revisione_superata" in line:
                     self.post("arrow", "codex", 1)
             code = self.child.wait()
@@ -545,7 +651,9 @@ class ZionApp(tk.Tk):
         except Exception as exc:
             self.post("error", str(exc))
         finally:
+            self.monitor_stop.set()
             self.stop_events()
+            self.cleanup_agents()
             self.child = None
             self.post("done")
 
@@ -591,26 +699,54 @@ class ZionApp(tk.Tk):
         self.events_child = None
 
     def stop_work(self):
-        if not self.running:
+        if not self.running or self.closing:
             return
-        if not messagebox.askyesno("Ferma ZION",
-                "Fermare il coordinamento?\nLe sessioni degli agenti "
-                "potrebbero rimanere attive e vanno controllate separatamente."):
+        if not messagebox.askyesno(
+                "Ferma ZION",
+                "Fermare il lavoro e chiudere anche gli agenti "
+                "Claude/Codex avviati da questa finestra?"):
             return
-        self.cancel.set()
-        if self.child and self.child.poll() is None:
-            self.child.terminate()
-        self.post("log", "zion", "Interruzione richiesta dall'utente.")
-        self.post("status", "Arresto richiesto")
+        self.request_stop()
+        self.post("log", "zion", "Arresto richiesto: chiusura dei propri agenti in corso.")
+        self.post("status", "Arresto agenti in corso...")
 
     def close_app(self):
-        if self.running and not messagebox.askyesno(
-                "Uscita", "Il coordinamento è in corso. Vuoi interromperlo e uscire?"):
+        if self.closing:
             return
-        self.cancel.set()
-        if self.child and self.child.poll() is None:
-            self.child.terminate()
-        self.stop_events()
+        if self.running and not messagebox.askyesno(
+                "Uscita", "Interrompere il lavoro e chiudere gli agenti "
+                "Claude/Codex avviati da questa finestra?"):
+            return
+        self.closing = True
+        self.request_stop()
+        self.current.set("Chiusura agenti in corso...")
+        self.go.configure(state="disabled")
+        self.stop_button.configure(state="disabled")
+        self.after(180, self.finish_close)
+
+    def finish_close(self):
+        # Keep the Tk event loop alive until the launch thread has returned
+        # and its finally block has cleaned up. Otherwise new agents could be
+        # launched after the GUI had exited.
+        if self.worker_thread is not None and self.worker_thread.is_alive():
+            self.after(220, self.finish_close)
+            return
+        if self.sessions.snapshot() and self.close_cleanup_thread is None:
+            self.close_cleanup_thread = threading.Thread(
+                target=self.cleanup_agents, daemon=True)
+            self.close_cleanup_thread.start()
+        if self.close_cleanup_thread is not None and self.close_cleanup_thread.is_alive():
+            self.after(220, self.finish_close)
+            return
+        if self.sessions.snapshot():
+            if messagebox.askretrycancel(
+                    "ZION — chiusura incompleta",
+                    "Alcune sessioni di ZION non sono state chiuse. "
+                    "Riprovare la chiusura automatica? "
+                    "(Annulla chiude la finestra lasciando i processi attivi.)"):
+                self.close_cleanup_thread = None
+                self.after(180, self.finish_close)
+                return
         self.destroy()
 
 
