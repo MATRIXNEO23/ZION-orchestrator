@@ -50,15 +50,27 @@ def locate_path():
 
 
 def agent_name(text):
-    """Estrae un nome affidabile dal JSON di hcom, non lo indovina."""
+    """Estrae il nome restituito da hcom, incluse le risposte JSON --headless."""
     for line in reversed(text.splitlines()):
         try:
             parsed = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(parsed, dict):
+            continue
+        # hcom 0.7.31: {"action":"launch", "launched":1,
+        #               "failed":0, "errors":[], "names":["zumi"], ...}
+        # La GUI avvia sempre un solo agente: non scegliere un nome a caso.
+        if parsed.get("action") == "launch":
+            names = parsed.get("names")
+            if (parsed.get("launched") == 1 and parsed.get("failed") == 0
+                    and not parsed.get("errors") and isinstance(names, list)
+                    and len(names) == 1 and isinstance(names[0], str)
+                    and NAME.fullmatch(names[0])):
+                return names[0]
+            return None
         candidates = [parsed]
-        if isinstance(parsed, dict):
-            candidates += [parsed.get(k) for k in ("agent", "instance", "result", "data")]
+        candidates += [parsed.get(k) for k in ("agent", "instance", "result", "data")]
         for entry in candidates:
             if not isinstance(entry, dict):
                 continue
