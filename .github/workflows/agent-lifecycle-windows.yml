@@ -1,0 +1,26 @@
+name: ZION Windows - agent lifecycle and activity
+on:
+  push:
+    branches: [feature/activity-visibility-20261116]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python sources
+        shell: pwsh
+        run: |
+          python -m py_compile zion.py zion_gui.py zion_sessions.py
+      - name: Run unit and GUI tests on Windows
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -v
+      - name: Smoke test startup without authenticated agents or model calls
+        shell: pwsh
+        run: |
+          python zion.py doctor
