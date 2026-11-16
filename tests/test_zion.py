@@ -16,6 +16,16 @@ class ZionTests(unittest.TestCase):
         with patch.dict("os.environ", {"ZION_HCOM_BINARY": r"C:\\tools\\hcom.exe"}):
             self.assertEqual(binary("hcom"), r"C:\\tools\\hcom.exe")
 
+    def test_hcom_preflight_rejects_blocked_before_sending_any_work(self):
+        import subprocess
+        from zion import hcom_preflight
+        result = subprocess.CompletedProcess(
+            ["hcom", "list", "rovo", "status"], 0, "blocked\n", "")
+        with patch.dict("os.environ", {"ZION_HCOM_BINARY": "hcom.exe"}):
+            with patch("zion.subprocess.run", return_value=result):
+                with self.assertRaisesRegex(ZionError, "non disponibile"):
+                    hcom_preflight(["rovo"])
+
     def test_compact_issues_caps_size(self):
         issues = [{"file": "a.py", "line": 12, "severity": "high",
                    "problem": "x" * 900} for _ in range(30)]
