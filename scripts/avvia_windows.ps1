@@ -7,6 +7,41 @@ $logPath = Join-Path $logs ("avvio_{0}.log" -f (Get-Date -Format 'yyyyMMdd_HHmms
 $transcribing = $false
 $exitCode = 1
 
+# Allinea il PATH del nuovo processo con quello usato dall'installer.
+# Necessario quando hcom (uv) viene installato in una cartella utente non ancora
+# visibile ai processi Windows avviati con il vecchio ambiente.
+function Refresh-ZionPath {
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $extras = @(
+        "$env:APPDATA\npm",
+        "$HOME\.local\bin",
+        "$env:ProgramFiles\Git\cmd",
+        "$env:ProgramFiles\nodejs",
+        "$env:LOCALAPPDATA\Programs\Git\cmd",
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Links",
+        "$env:LOCALAPPDATA\Programs\Python\Python312",
+        "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts"
+    )
+    if ($env:UV_TOOL_BIN_DIR) { $extras += $env:UV_TOOL_BIN_DIR }
+    $env:Path = (((@($env:Path, $machine, $user) -join ';').Split(';') + $extras |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique) -join ';')
+
+    # uv conosce la directory effettiva anche se l'utente l'ha personalizzata.
+    $uv = Get-Command uv -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($uv) {
+        try {
+            $uvBin = & $uv.Source tool dir --bin 2>$null | Select-Object -First 1
+            if ($LASTEXITCODE -eq 0 -and $uvBin -and
+                (Test-Path -LiteralPath $uvBin -PathType Container) -and
+                (($env:Path -split ';') -notcontains $uvBin)) {
+                $env:Path += ";$uvBin"
+            }
+        } catch { }
+    }
+}
+
 function Stop-Zion([string]$Message) {
     Write-Host "[ZION] ERRORE: $Message" -ForegroundColor Red
     throw $Message
@@ -17,6 +52,8 @@ try {
     $transcribing = $true
     Write-Host '[ZION] Avvio guidato su Windows'
     Write-Host '[ZION] Le IA saranno chiamate SOLO dopo la conferma del compito.'
+    Refresh-ZionPath
+    Write-Host '[ZION] Percorsi Windows aggiornati per questa sessione.'
 
     $python = Get-Command py -ErrorAction SilentlyContinue | Select-Object -First 1
     $pyArgs = @('-3')
@@ -27,8 +64,12 @@ try {
     if (-not $python) { Stop-Zion 'Python non trovato. Esegui INSTALLA_ZION.bat.' }
 
     foreach ($tool in @('git', 'hcom', 'claude', 'codex')) {
-        if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-            Stop-Zion "$tool non trovato. Esegui INSTALLA_ZION.bat e riprova."
+        $found = Get-Command $tool -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $found) {
+            Stop-Zion "$tool non trovato anche dopo aggiornamento PATH. Controlla logs e INSTALLA_ZION.bat."
+        }
+        if ($tool -eq 'hcom') {
+            Write-Host "[ZION] hcom trovato: $($found.Source)"
         }
     }
 
