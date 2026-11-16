@@ -14,7 +14,7 @@ from zion_sessions import OwnedHcomAgents, blocked_status, visible_status
 BASE = Path(__file__).resolve().parent
 LOG_DIR = BASE / "logs"
 LOG_DIR.mkdir(exist_ok=True)
-NAME = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 
 def locate_path():
