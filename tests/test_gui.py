@@ -128,6 +128,63 @@ class GuiUnitTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "initialize senza risposta"):
                 warm_codex_app_server("codex.cmd", ".", timeout=1)
 
+    def test_window_close_kills_only_agents_owned_by_this_app(self):
+        import os
+        import subprocess
+        import tkinter
+        from zion_gui import ZionApp
+        try:
+            app = ZionApp()
+        except tkinter.TclError as exc:
+            self.skipTest("Desktop GUI unavailable: " + str(exc))
+        app.withdraw()
+        calls = []
+        def runner(args, **kwargs):
+            calls.append(list(args))
+            return subprocess.CompletedProcess(args, 0, "", "")
+        try:
+            app.sessions._runner = runner
+            app.sessions.configure("hcom.exe", dict(os.environ), os.getcwd())
+            app.sessions.register("codex", "miso")
+            app.sessions.register("claude", "nuve")
+            app.close_app()
+            self.assertTrue(app.closing)
+            app.finish_close()
+            if app.close_cleanup_thread:
+                app.close_cleanup_thread.join(timeout=5)
+            app.finish_close()
+            self.assertEqual(calls, [
+                ["hcom.exe", "kill", "miso"],
+                ["hcom.exe", "kill", "nuve"]])
+            self.assertFalse(any("all" in args for args in calls))
+        finally:
+            try:
+                if app.winfo_exists():
+                    app.destroy()
+            except tkinter.TclError:
+                pass
+
+    def test_close_waits_for_launch_worker_before_cleanup(self):
+        import tkinter
+        from unittest.mock import Mock, patch
+        from zion_gui import ZionApp
+        try:
+            app = ZionApp()
+        except tkinter.TclError as exc:
+            self.skipTest("Desktop GUI unavailable: " + str(exc))
+        try:
+            app.withdraw()
+            app.worker_thread = Mock()
+            app.worker_thread.is_alive.return_value = True
+            with patch.object(app, "after") as after:
+                with patch.object(app, "destroy") as destroy:
+                    app.close_app()
+                    app.finish_close()
+                    self.assertFalse(destroy.called)
+                    self.assertTrue(after.called)
+        finally:
+            app.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
