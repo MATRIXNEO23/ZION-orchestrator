@@ -248,7 +248,7 @@ class ZionApp(tk.Tk):
             width = max(30, canvas.winfo_width())
             mid = max(30, canvas.winfo_height()) / 2
             x1, x2 = 8, width - 8
-            canvas.create_line(x1, mid, x2, mid, fill="#455f71", width=2)
+            canvas.create_line(x1, mid, x2, mid, fill="#455f71", width=2, arrow=tk.BOTH)
             started, direction = self.motion[role]
             elapsed = moment - started
             if elapsed < 2:
@@ -256,8 +256,9 @@ class ZionApp(tk.Tk):
                 # Codex è a sinistra, Claude a destra.
                 right = (direction == 1)
                 x = x1 + (x2 - x1) * (phase if right else (1-phase))
-                canvas.create_oval(x-5, mid-5, x+5, mid+5,
-                                   fill="#6fcce4", outline="")
+                canvas.create_line(x-9, mid, x+9, mid, fill="#6fcce4",
+                                   width=3, arrow=tk.LAST if right else tk.FIRST,
+                                   arrowshape=(9, 10, 4))
             canvas.create_text(width/2, mid+20, text="scambio" if elapsed < 2 else "attesa",
                                fill="#8babb9", font=("Segoe UI", 8))
         self.after(70, self.animate)
