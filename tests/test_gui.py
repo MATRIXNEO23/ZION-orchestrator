@@ -20,5 +20,24 @@ class GuiUnitTests(unittest.TestCase):
     def test_app_server_hint(self):
         self.assertIn("App Server", error_hint("Codex App Server closed before response"))
 
+    def test_error_window_opens_without_models(self):
+        import tkinter
+        from zion_gui import ZionApp
+        try:
+            app = ZionApp()
+        except tkinter.TclError as ex:
+            self.skipTest("Desktop UI unavailable on CI runner: " + str(ex))
+        try:
+            app.withdraw()
+            app.update()
+            app.show_errors()
+            app.update()
+            self.assertTrue(app.error_window.winfo_exists())
+            app.log("zion", "database is locked", is_error=True)
+            self.assertTrue(any("database is locked" in x for x in app.errors))
+        finally:
+            app.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()
