@@ -231,9 +231,9 @@ class ZionApp(tk.Tk):
         self.agents = {"claude": "claude", "codex": "codex"}
         self.motion = {"codex": (0.0, 0), "claude": (0.0, 0)}
         self.create_ui()
-        self.after(85, self.drain)
-        self.after(70, self.animate)
-        self.after(1000, self.refresh_agent_labels)
+        self._drain_timer = self.after(85, self.drain)
+        self._animate_timer = self.after(70, self.animate)
+        self._label_timer = self.after(1000, self.refresh_agent_labels)
         self.protocol("WM_DELETE_WINDOW", self.close_app)
         self.log("zion", "Pronto. Nessuna richiesta inviata alle IA.")
 
@@ -383,7 +383,7 @@ class ZionApp(tk.Tk):
                 self.running = False
                 self.go.configure(state="normal")
                 self.stop_button.configure(state="disabled")
-        self.after(85, self.drain)
+        self._drain_timer = self.after(85, self.drain)
 
     def refresh_agent_labels(self):
         """Show observed hcom state and how long since the instruction was sent."""
@@ -398,7 +398,7 @@ class ZionApp(tk.Tk):
                 elapsed = max(0, int(time.monotonic() - sent))
                 label_var.set(f"hcom: {state[:48]} | rapporto atteso da "
                               f"{elapsed // 60:02d}:{elapsed % 60:02d}")
-        self.after(1000, self.refresh_agent_labels)
+        self._label_timer = self.after(1000, self.refresh_agent_labels)
 
     def monitor_agents(self, stop_event):
         """Read actual agent state; report launch_blocked instead of waiting 30m."""
@@ -469,7 +469,7 @@ class ZionApp(tk.Tk):
                                    arrowshape=(9, 10, 4))
             canvas.create_text(width/2, mid+20, text="scambio" if elapsed < 2 else "attesa",
                                fill="#8babb9", font=("Segoe UI", 8))
-        self.after(70, self.animate)
+        self._animate_timer = self.after(70, self.animate)
 
     def start(self):
         if self.running or self.closing:
@@ -581,6 +581,8 @@ class ZionApp(tk.Tk):
             self.listen_events(env, folder, binaries["hcom"])
             threading.Thread(target=self.monitor_agents,
                              args=(self.monitor_stop,), daemon=True).start()
+            if self.cancel.is_set():
+                return
             # Se la GUI usa pythonw.exe, lanciare il motore con python.exe:
             # pythonw non garantisce stdout/stderr leggibili dal coordinatore.
             engine = sys.executable
@@ -596,6 +598,8 @@ class ZionApp(tk.Tk):
                 stderr=subprocess.STDOUT, text=True,
                 encoding="utf-8", errors="replace", bufsize=1,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if self.cancel.is_set():
+                self.child.terminate()
             for raw in self.child.stdout:
                 line = raw.strip()
                 if not line:
@@ -709,6 +713,18 @@ class ZionApp(tk.Tk):
         self.request_stop()
         self.post("log", "zion", "Arresto richiesto: chiusura dei propri agenti in corso.")
         self.post("status", "Arresto agenti in corso...")
+
+    def destroy(self):
+        # Cancel Tk timers explicitly, including when tests close a window.
+        for attr in ("_drain_timer", "_animate_timer", "_label_timer"):
+            timer = getattr(self, attr, None)
+            if timer is not None:
+                try:
+                    self.after_cancel(timer)
+                except (tk.TclError, ValueError):
+                    pass
+                setattr(self, attr, None)
+        super().destroy()
 
     def close_app(self):
         if self.closing:
